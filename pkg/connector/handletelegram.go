@@ -261,7 +261,7 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 		}
 		return nil
 	case *tg.MessageService:
-		return tc.handleServiceMessage(ctx, msg)
+		return tc.handleServiceMessage(ctx, entities, msg)
 
 	default:
 		log.Warn().
@@ -296,12 +296,12 @@ func rawGetTopicID(rawReplyTo tg.MessageReplyHeaderClass) int {
 	return 0
 }
 
-func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.MessageService) error {
+func (tc *TelegramClient) handleServiceMessage(ctx context.Context, entities tg.Entities, msg *tg.MessageService) error {
 	log := zerolog.Ctx(ctx)
 	sender := tc.getEventSender(msg, false)
 	topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
 	portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
-	ok, err := tc.ensurePortalApprovedForPeer(ctx, portalKey, msg.PeerID, topicID, tg.Entities{}, "service message")
+	ok, err := tc.ensurePortalApprovedForPeer(ctx, portalKey, msg.PeerID, topicID, entities, "service message")
 	if err != nil {
 		return err
 	} else if !ok {
