@@ -160,6 +160,12 @@ func (tc *TelegramClient) onUpdateChannel(ctx context.Context, e tg.Entities, up
 		log.Debug().Msg("Update was for a left channel. Leaving the channel.")
 		return tc.selfLeaveChat(ctx, portalKey, fmt.Errorf("channel has left=true after UpdateChannel"))
 	}
+	ok, err := tc.ensurePortalApprovedForObject(ctx, portalKey, channel, "update channel")
+	if err != nil {
+		return err
+	} else if !ok {
+		return nil
+	}
 	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.ChatResync{
 		EventMeta: simplevent.EventMeta{
 			Type:         bridgev2.RemoteEventChatResync,
@@ -217,6 +223,13 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 		}
 
 		topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
+		portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
+		ok, err := tc.ensurePortalApprovedForPeer(ctx, portalKey, msg.PeerID, topicID, entities, "new message")
+		if err != nil {
+			return err
+		} else if !ok {
+			return nil
+		}
 		res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Message[*tg.Message]{
 			EventMeta: simplevent.EventMeta{
 				Type: bridgev2.RemoteEventMessage,
@@ -229,7 +242,7 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 						Stringer("peer_id", msg.PeerID)
 				},
 				Sender:       sender,
-				PortalKey:    tc.makePortalKeyFromPeer(msg.PeerID, topicID),
+				PortalKey:    portalKey,
 				CreatePortal: true,
 				Timestamp:    time.Unix(int64(msg.Date), 0),
 				StreamOrder:  int64(msg.GetID()),
@@ -286,9 +299,17 @@ func rawGetTopicID(rawReplyTo tg.MessageReplyHeaderClass) int {
 func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.MessageService) error {
 	log := zerolog.Ctx(ctx)
 	sender := tc.getEventSender(msg, false)
+	topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
+	portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
+	ok, err := tc.ensurePortalApprovedForPeer(ctx, portalKey, msg.PeerID, topicID, tg.Entities{}, "service message")
+	if err != nil {
+		return err
+	} else if !ok {
+		return nil
+	}
 
 	eventMeta := simplevent.EventMeta{
-		PortalKey: tc.makePortalKeyFromPeer(msg.PeerID, tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)),
+		PortalKey: portalKey,
 		Sender:    sender,
 		Timestamp: time.Unix(int64(msg.Date), 0),
 		LogContext: func(c zerolog.Context) zerolog.Context {
@@ -1082,9 +1103,11 @@ func (tc *TelegramClient) onMessageEdit(ctx context.Context, update IGetMessage)
 	}
 
 	portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
-	portal, err := tc.main.Bridge.GetPortalByKey(ctx, portalKey)
+	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, portalKey)
 	if err != nil {
 		return err
+	} else if portal == nil || portal.MXID == "" {
+		return nil
 	}
 	sender := tc.getEventSender(msg, !portal.Metadata.(*PortalMetadata).IsSuperGroup)
 

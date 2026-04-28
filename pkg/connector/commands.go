@@ -18,17 +18,23 @@ package connector
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/rs/zerolog"
 	"golang.org/x/net/html"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/commands"
 	"maunium.net/go/mautrix/bridgev2/networkid"
+	"maunium.net/go/mautrix/bridgev2/simplevent"
 	"maunium.net/go/mautrix/format"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
+	"go.mau.fi/mautrix-telegram/pkg/connector/store"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tgerr"
 )
@@ -215,6 +221,241 @@ func fnJoin(ce *commands.Event) {
 		ce.Log.Debug().Msg("Finished handling updates from joining chat with invite link")
 	}
 	ce.Reply("Successfully joined %s", html.EscapeString(chatName))
+}
+
+var cmdPending = &commands.FullHandler{
+	Func: fnApprovalList(store.PortalApprovalPending),
+	Name: "pending",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "List Telegram chats waiting for approval",
+	},
+	RequiresLogin: true,
+}
+
+var cmdAllowed = &commands.FullHandler{
+	Func: fnApprovalList(store.PortalApprovalAllowed),
+	Name: "allowed",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "List Telegram chats approved for portal creation",
+	},
+	RequiresLogin: true,
+}
+
+var cmdDenied = &commands.FullHandler{
+	Func: fnApprovalList(store.PortalApprovalDenied),
+	Name: "denied",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "List Telegram chats denied for portal creation",
+	},
+	RequiresLogin: true,
+}
+
+var cmdAllow = &commands.FullHandler{
+	Func: fnApprovalSetStatus(store.PortalApprovalAllowed, true),
+	Name: "allow",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "Approve a Telegram chat from the pending list and create its portal",
+		Args:        "<pending number>",
+	},
+	RequiresLogin: true,
+}
+
+var cmdDeny = &commands.FullHandler{
+	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false),
+	Name: "deny",
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "Deny a Telegram chat from the pending list",
+		Args:        "<pending number>",
+	},
+	RequiresLogin: true,
+}
+
+var cmdUnallow = &commands.FullHandler{
+	Func:    fnApprovalSetStatus(store.PortalApprovalDenied, false),
+	Name:    "unallow",
+	Aliases: []string{"disallow"},
+	Help: commands.HelpMeta{
+		Section:     commands.HelpSectionChats,
+		Description: "Move an approved Telegram chat to denied",
+		Args:        "<allowed number>",
+	},
+	RequiresLogin: true,
+}
+
+func approvalCommandClient(ce *commands.Event) *TelegramClient {
+	login := ce.User.GetDefaultLogin()
+	if login == nil {
+		ce.Reply("You're not logged in")
+		return nil
+	}
+	client, ok := login.Client.(*TelegramClient)
+	if !ok {
+		ce.Reply("Your default login is not a Telegram login")
+		return nil
+	}
+	return client
+}
+
+func fnApprovalList(status store.PortalApprovalStatus) func(*commands.Event) {
+	return func(ce *commands.Event) {
+		client := approvalCommandClient(ce)
+		if client == nil {
+			return
+		}
+		items, err := client.main.Store.Approval.GetByStatus(ce.Ctx, client.telegramUserID, status)
+		if err != nil {
+			ce.Log.Err(err).Str("approval_status", string(status)).Msg("Failed to list Telegram portal approvals")
+			ce.Reply("Failed to list %s Telegram chats: %v", status, err)
+			return
+		} else if len(items) == 0 {
+			ce.Reply("No %s Telegram chats.", status)
+			return
+		}
+
+		var builder strings.Builder
+		fmt.Fprintf(&builder, "%s Telegram chats:\n", approvalStatusTitle(status))
+		printed := map[string]struct{}{}
+		for _, peerType := range []string{string(ids.PeerTypeUser), string(ids.PeerTypeChat), "supergroup", string(ids.PeerTypeChannel)} {
+			printedAny := false
+			for _, item := range items {
+				if item.PeerType != peerType {
+					continue
+				}
+				if !printedAny {
+					printedAny = true
+					fmt.Fprintf(&builder, "\n%s:\n", approvalPeerTypeTitle(peerType))
+				}
+				builder.WriteString(formatApprovalItem(item))
+				printed[item.PeerType] = struct{}{}
+			}
+		}
+		for _, item := range items {
+			if _, ok := printed[item.PeerType]; ok {
+				continue
+			}
+			if _, ok := printed[""]; !ok {
+				printed[""] = struct{}{}
+				fmt.Fprintf(&builder, "\n%s:\n", approvalPeerTypeTitle(item.PeerType))
+			}
+			builder.WriteString(formatApprovalItem(item))
+		}
+		ce.Reply(builder.String())
+	}
+}
+
+func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool) func(*commands.Event) {
+	return func(ce *commands.Event) {
+		client := approvalCommandClient(ce)
+		if client == nil {
+			return
+		}
+		if len(ce.Args) != 1 {
+			ce.Reply("Usage: `$cmdprefix allow|deny|unallow <number>`")
+			return
+		}
+		approvalID, err := strconv.ParseInt(ce.Args[0], 10, 64)
+		if err != nil {
+			ce.Reply("Invalid approval number: %s", format.SafeMarkdownCode(ce.Args[0]))
+			return
+		}
+		item, err := client.main.Store.Approval.GetByID(ce.Ctx, client.telegramUserID, approvalID)
+		if err != nil {
+			ce.Log.Err(err).Int64("approval_id", approvalID).Msg("Failed to fetch Telegram portal approval")
+			ce.Reply("Failed to fetch approval item: %v", err)
+			return
+		} else if item == nil {
+			ce.Reply("No Telegram approval item found with number %d.", approvalID)
+			return
+		}
+		if err = client.main.Store.Approval.SetStatus(ce.Ctx, client.telegramUserID, approvalID, status); err != nil {
+			ce.Log.Err(err).Int64("approval_id", approvalID).Str("approval_status", string(status)).Msg("Failed to update Telegram portal approval")
+			ce.Reply("Failed to update approval item: %v", err)
+			return
+		}
+		if createPortal {
+			portalKey := networkid.PortalKey{ID: item.PortalID, Receiver: item.PortalReceiver}
+			res := client.main.Bridge.QueueRemoteEvent(client.userLogin, &simplevent.ChatResync{
+				EventMeta: simplevent.EventMeta{
+					Type:         bridgev2.RemoteEventChatResync,
+					PortalKey:    portalKey,
+					CreatePortal: true,
+					LogContext: func(c zerolog.Context) zerolog.Context {
+						return c.
+							Int64("approval_id", approvalID).
+							Str("approval_command", "allow")
+					},
+				},
+				GetChatInfoFunc: client.GetChatInfo,
+			})
+			if err = resultToError(res); err != nil {
+				ce.Log.Err(err).Int64("approval_id", approvalID).Msg("Failed to create approved Telegram portal")
+				ce.Reply("Approved %s, but failed to create the Matrix room: %v", approvalDisplayName(*item), err)
+				return
+			}
+			ce.Reply("Approved %s and requested Matrix room creation.", approvalDisplayName(*item))
+		} else {
+			ce.Reply("Marked %s as %s.", approvalDisplayName(*item), status)
+		}
+	}
+}
+
+func approvalStatusTitle(status store.PortalApprovalStatus) string {
+	switch status {
+	case store.PortalApprovalPending:
+		return "Pending"
+	case store.PortalApprovalAllowed:
+		return "Allowed"
+	case store.PortalApprovalDenied:
+		return "Denied"
+	default:
+		return string(status)
+	}
+}
+
+func approvalPeerTypeTitle(peerType string) string {
+	switch peerType {
+	case string(ids.PeerTypeUser):
+		return "Private chats"
+	case string(ids.PeerTypeChat):
+		return "Groups"
+	case "supergroup":
+		return "Supergroups"
+	case string(ids.PeerTypeChannel):
+		return "Channels"
+	default:
+		return "Other"
+	}
+}
+
+func approvalDisplayName(item store.PortalApproval) string {
+	if item.Username != "" {
+		return fmt.Sprintf("%s (@%s)", item.Title, item.Username)
+	}
+	return item.Title
+}
+
+func formatApprovalItem(item store.PortalApproval) string {
+	seenAt := time.Unix(item.LastSeenTS, 0).Format("2006-01-02 15:04")
+	var builder strings.Builder
+	fmt.Fprintf(
+		&builder,
+		"%d. %s\n",
+		item.ApprovalID,
+		format.SafeMarkdownCode(approvalDisplayName(item)),
+	)
+	fmt.Fprintf(
+		&builder,
+		"   portal: %s, last: %s, event: %s\n",
+		format.SafeMarkdownCode(string(item.PortalID)),
+		format.SafeMarkdownCode(seenAt),
+		format.SafeMarkdownCode(item.LastEvent),
+	)
+	return builder.String()
 }
 
 var cmdEmojiPack = &commands.FullHandler{

@@ -64,6 +64,18 @@ proxy:
     username:
     password:
 
+portal_approval:
+    # If enabled, portals are only created automatically for chat types allowed
+    # below. Other sources can be approved with Matrix commands.
+    enabled: false
+    auto_create:
+        private_chats: true
+        groups: false
+        supergroups: false
+        channels: false
+    pending:
+        enabled: true
+
 sync:
     # Number of most recently active dialogs to check when syncing chats.
     # Set to -1 to remove limit.

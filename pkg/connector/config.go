@@ -62,6 +62,21 @@ type ProxyConfig struct {
 	Password string `yaml:"password"`
 }
 
+type PortalApprovalConfig struct {
+	Enabled bool `yaml:"enabled"`
+
+	AutoCreate struct {
+		PrivateChats bool `yaml:"private_chats"`
+		Groups       bool `yaml:"groups"`
+		Supergroups  bool `yaml:"supergroups"`
+		Channels     bool `yaml:"channels"`
+	} `yaml:"auto_create"`
+
+	Pending struct {
+		Enabled bool `yaml:"enabled"`
+	} `yaml:"pending"`
+}
+
 type TelegramConfig struct {
 	APIID   int    `yaml:"api_id"`
 	APIHash string `yaml:"api_hash"`
@@ -76,6 +91,8 @@ type TelegramConfig struct {
 	} `yaml:"ping"`
 
 	ProxyConfig ProxyConfig `yaml:"proxy"`
+
+	PortalApproval PortalApprovalConfig `yaml:"portal_approval"`
 
 	Sync struct {
 		UpdateLimit int  `yaml:"update_limit"`
@@ -174,6 +191,12 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Str|up.Null, "proxy", "address")
 	helper.Copy(up.Str|up.Null, "proxy", "username")
 	helper.Copy(up.Str|up.Null, "proxy", "password")
+	helper.Copy(up.Bool, "portal_approval", "enabled")
+	helper.Copy(up.Bool, "portal_approval", "auto_create", "private_chats")
+	helper.Copy(up.Bool, "portal_approval", "auto_create", "groups")
+	helper.Copy(up.Bool, "portal_approval", "auto_create", "supergroups")
+	helper.Copy(up.Bool, "portal_approval", "auto_create", "channels")
+	helper.Copy(up.Bool, "portal_approval", "pending", "enabled")
 	helper.Copy(up.Int, "sync", "update_limit")
 	helper.Copy(up.Int, "sync", "create_limit")
 	helper.Copy(up.Int, "sync", "login_sync_limit")
@@ -201,6 +224,7 @@ func (tc *TelegramConnector) GetConfig() (example string, data any, upgrader up.
 			{"member_list"},
 			{"ping"},
 			{"proxy"},
+			{"portal_approval"},
 			{"sync"},
 			{"takeout"},
 			{"max_member_count"},
