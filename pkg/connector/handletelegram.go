@@ -518,8 +518,11 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, msg *tg.Mess
 				body.WriteString(", ")
 			}
 
-			if ghost, err := tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(userID)); err != nil {
+			if ghost, err := tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeUserID(userID)); err != nil {
 				return err
+			} else if ghost == nil {
+				body.WriteString(fmt.Sprintf("user %d", userID))
+				html.WriteString(fmt.Sprintf("<strong>user %d</strong>", userID))
 			} else {
 				var name string
 				if username, err := tc.main.Store.Username.Get(ctx, ids.PeerTypeUser, userID); err != nil {
@@ -722,9 +725,12 @@ func (tc *TelegramClient) getPeerSender(peer tg.PeerClass) bridgev2.EventSender 
 }
 
 func (tc *TelegramClient) onUserName(ctx context.Context, e tg.Entities, update *tg.UpdateUserName) error {
-	ghost, err := tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(update.UserID))
+	ghost, err := tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeUserID(update.UserID))
 	if err != nil {
 		return err
+	} else if ghost == nil {
+		// Don't auto-create ghosts from background profile updates.
+		return nil
 	}
 	meta := ghost.Metadata.(*GhostMetadata)
 
