@@ -214,8 +214,6 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 			}
 		}
 
-		sender := tc.getEventSender(msg, isBroadcastChannel)
-
 		if media, ok := msg.GetMedia(); ok && media.TypeID() == tg.MessageMediaContactTypeID {
 			contact := media.(*tg.MessageMediaContact)
 			// TODO update the corresponding puppet
@@ -230,6 +228,7 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 		} else if !ok {
 			return nil
 		}
+		sender := tc.getEventSender(msg, isBroadcastChannel)
 		res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Message[*tg.Message]{
 			EventMeta: simplevent.EventMeta{
 				Type: bridgev2.RemoteEventMessage,
@@ -298,7 +297,6 @@ func rawGetTopicID(rawReplyTo tg.MessageReplyHeaderClass) int {
 
 func (tc *TelegramClient) handleServiceMessage(ctx context.Context, entities tg.Entities, msg *tg.MessageService) error {
 	log := zerolog.Ctx(ctx)
-	sender := tc.getEventSender(msg, false)
 	topicID := tc.getTopicID(ctx, msg.PeerID, msg.ReplyTo)
 	portalKey := tc.makePortalKeyFromPeer(msg.PeerID, topicID)
 	ok, err := tc.ensurePortalApprovedForPeer(ctx, portalKey, msg.PeerID, topicID, entities, "service message")
@@ -307,6 +305,7 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, entities tg.
 	} else if !ok {
 		return nil
 	}
+	sender := tc.getEventSender(msg, false)
 
 	eventMeta := simplevent.EventMeta{
 		PortalKey: portalKey,
