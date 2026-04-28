@@ -5,7 +5,7 @@ RUN apk add --no-cache git ca-certificates build-base su-exec olm-dev
 COPY . /build
 WORKDIR /build
 # Limit parallelism to reduce peak RAM usage when self-building on small VPSes.
-RUN GOFLAGS="-p=1" GOMAXPROCS=1 ./build.sh
+RUN GOFLAGS="-p=2" GOMAXPROCS=2 ./build.sh
 
 FROM alpine:3.23
 
