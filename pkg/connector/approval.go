@@ -115,6 +115,14 @@ func (tc *TelegramClient) portalApprovalAutoAllowed(info portalApprovalInfo) boo
 	}
 }
 
+func (tc *TelegramClient) portalApprovalStorageKey(portalKey networkid.PortalKey) networkid.PortalKey {
+	peerType, entityID, _, err := ids.ParsePortalID(portalKey.ID)
+	if err != nil {
+		return portalKey
+	}
+	return tc.makePortalKeyFromID(peerType, entityID, 0)
+}
+
 func (tc *TelegramClient) ensurePortalApproved(ctx context.Context, portalKey networkid.PortalKey, info portalApprovalInfo, lastEvent string) (bool, error) {
 	if !tc.main.Config.PortalApproval.Enabled {
 		return true, nil
@@ -125,8 +133,9 @@ func (tc *TelegramClient) ensurePortalApproved(ctx context.Context, portalKey ne
 	} else if portal != nil && portal.MXID != "" {
 		return true, nil
 	}
+	approvalKey := tc.portalApprovalStorageKey(portalKey)
 	userID := tc.telegramUserID
-	item, err := tc.main.Store.Approval.GetByPortal(ctx, userID, portalKey.ID, portalKey.Receiver)
+	item, err := tc.main.Store.Approval.GetByPortal(ctx, userID, approvalKey.ID, approvalKey.Receiver)
 	if err != nil {
 		return false, err
 	}
@@ -147,11 +156,11 @@ func (tc *TelegramClient) ensurePortalApproved(ctx context.Context, portalKey ne
 
 	_, err = tc.main.Store.Approval.Upsert(ctx, store.PortalApproval{
 		UserID:         userID,
-		PortalID:       portalKey.ID,
-		PortalReceiver: portalKey.Receiver,
+		PortalID:       approvalKey.ID,
+		PortalReceiver: approvalKey.Receiver,
 		PeerType:       info.PeerType,
 		EntityID:       info.EntityID,
-		TopicID:        info.TopicID,
+		TopicID:        0,
 		Title:          info.Title,
 		Username:       info.Username,
 		Status:         status,
