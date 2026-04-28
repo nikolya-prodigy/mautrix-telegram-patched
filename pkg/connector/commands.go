@@ -39,6 +39,8 @@ import (
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tgerr"
 )
 
+var helpSectionPortalApproval = commands.HelpSection{"Telegram portal approval", 21}
+
 var cmdSyncChats = &commands.FullHandler{
 	Func: fnSyncChats,
 	Name: "sync-chats",
@@ -227,7 +229,7 @@ var cmdPending = &commands.FullHandler{
 	Func: fnApprovalList(store.PortalApprovalPending),
 	Name: "pending",
 	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionChats,
+		Section:     helpSectionPortalApproval,
 		Description: "List Telegram chats waiting for approval",
 	},
 	RequiresLogin: true,
@@ -237,7 +239,7 @@ var cmdAllowed = &commands.FullHandler{
 	Func: fnApprovalList(store.PortalApprovalAllowed),
 	Name: "allowed",
 	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionChats,
+		Section:     helpSectionPortalApproval,
 		Description: "List Telegram chats approved for portal creation",
 	},
 	RequiresLogin: true,
@@ -247,7 +249,7 @@ var cmdDenied = &commands.FullHandler{
 	Func: fnApprovalList(store.PortalApprovalDenied),
 	Name: "denied",
 	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionChats,
+		Section:     helpSectionPortalApproval,
 		Description: "List Telegram chats denied for portal creation",
 	},
 	RequiresLogin: true,
@@ -257,7 +259,7 @@ var cmdAllow = &commands.FullHandler{
 	Func: fnApprovalSetStatus(store.PortalApprovalAllowed, true),
 	Name: "allow",
 	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionChats,
+		Section:     helpSectionPortalApproval,
 		Description: "Approve a Telegram chat from the pending list and create its portal",
 		Args:        "<pending number>",
 	},
@@ -268,7 +270,7 @@ var cmdDeny = &commands.FullHandler{
 	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false),
 	Name: "deny",
 	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionChats,
+		Section:     helpSectionPortalApproval,
 		Description: "Deny a Telegram chat from the pending list",
 		Args:        "<pending number>",
 	},
@@ -280,7 +282,7 @@ var cmdUnallow = &commands.FullHandler{
 	Name:    "unallow",
 	Aliases: []string{"disallow"},
 	Help: commands.HelpMeta{
-		Section:     commands.HelpSectionChats,
+		Section:     helpSectionPortalApproval,
 		Description: "Move an approved Telegram chat to denied",
 		Args:        "<allowed number>",
 	},
