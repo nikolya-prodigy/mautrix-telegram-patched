@@ -39,7 +39,7 @@ import (
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tgerr"
 )
 
-var helpSectionPortalApproval = commands.HelpSection{"Telegram portal approval", 21}
+var helpSectionPortalApproval = commands.HelpSection{Name: "Telegram portal approval", Order: 21}
 
 var cmdSyncChats = &commands.FullHandler{
 	Func: fnSyncChats,
