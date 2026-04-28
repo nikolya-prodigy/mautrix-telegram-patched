@@ -809,8 +809,17 @@ func (tc *TelegramClient) onDeleteMessages(ctx context.Context, channelID int64,
 	return nil
 }
 
-func (tc *TelegramClient) updateGhost(ctx context.Context, userID int64, user *tg.User) (*bridgev2.UserInfo, error) {
-	ghost, err := tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(userID))
+func (tc *TelegramClient) updateGhost(ctx context.Context, userID int64, user *tg.User, createIfMissing bool) (*bridgev2.UserInfo, error) {
+	var ghost *bridgev2.Ghost
+	var err error
+	if createIfMissing {
+		ghost, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(userID))
+	} else {
+		ghost, err = tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeUserID(userID))
+		if err == nil && ghost == nil {
+			return nil, nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -827,13 +836,21 @@ func (tc *TelegramClient) updateGhost(ctx context.Context, userID int64, user *t
 	return userInfo, nil
 }
 
-func (tc *TelegramClient) updateChannel(ctx context.Context, channel *tg.Channel) (*bridgev2.UserInfo, error) {
+func (tc *TelegramClient) updateChannel(ctx context.Context, channel *tg.Channel, createIfMissing bool) (*bridgev2.UserInfo, error) {
 	// TODO resync portal metadata?
 	userInfo, err := tc.wrapChannelGhostInfo(ctx, channel)
 	if err != nil {
 		return nil, err
 	}
-	ghost, err := tc.main.Bridge.GetGhostByID(ctx, ids.MakeChannelUserID(channel.ID))
+	var ghost *bridgev2.Ghost
+	if createIfMissing {
+		ghost, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeChannelUserID(channel.ID))
+	} else {
+		ghost, err = tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeChannelUserID(channel.ID))
+		if err == nil && ghost == nil {
+			return nil, nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -884,7 +901,7 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 	zerolog.Ctx(ctx).Trace().Stringer("update", upd).Msg("Raw update")
 	for userID, user := range e.Users {
 		zerolog.Ctx(ctx).Trace().Stringer("user", user).Msg("Raw user info in update")
-		if _, err := tc.updateGhost(ctx, userID, user); err != nil {
+		if _, err := tc.updateGhost(ctx, userID, user, false); err != nil {
 			return err
 		}
 	}
@@ -900,7 +917,7 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 		if channel.GetLeft() {
 			tc.selfLeaveChat(ctx, tc.makePortalKeyFromID(ids.PeerTypeChannel, channel.ID, 0), fmt.Errorf("left flag in entity update"))
 		}
-		if _, err := tc.updateChannel(ctx, channel); err != nil {
+		if _, err := tc.updateChannel(ctx, channel, false); err != nil {
 			return err
 		}
 	}

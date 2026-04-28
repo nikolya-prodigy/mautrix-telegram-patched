@@ -97,7 +97,7 @@ func (tc *TelegramClient) resolveUserID(ctx context.Context, userID int64) (resp
 			return nil, fmt.Errorf("failed to get user with ID %d: %w", userID, err)
 		} else if user.TypeID() != tg.UserTypeID {
 			return nil, fmt.Errorf("unexpected user type: %T", user)
-		} else if userInfo, err := tc.updateGhost(ctx, userID, user.(*tg.User)); err != nil {
+		} else if userInfo, err := tc.updateGhost(ctx, userID, user.(*tg.User), true); err != nil {
 			return nil, fmt.Errorf("failed to update ghost: %w", err)
 		} else {
 			if resp.Ghost == nil {
