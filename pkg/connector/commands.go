@@ -418,9 +418,52 @@ func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool, a
 			}
 			ce.Reply("Approved %s and requested Matrix room creation.", approvalDisplayName(*item))
 		} else {
+			if client.shouldDeleteApprovalPortal(status) {
+				deleted, err := client.deleteApprovalPortal(ce, *item)
+				if err != nil {
+					ce.Log.Err(err).Int64("approval_id", approvalID).Msg("Failed to delete Telegram approval portal")
+					ce.Reply("Moved %s to %s, but failed to delete the Matrix portal: %v", approvalDisplayName(*item), status, err)
+					return
+				} else if deleted {
+					ce.Reply("Moved %s to %s and deleted the Matrix portal room.", approvalDisplayName(*item), status)
+					return
+				}
+			}
 			ce.Reply("Moved %s to %s.", approvalDisplayName(*item), status)
 		}
 	}
+}
+
+func (tc *TelegramClient) shouldDeleteApprovalPortal(status store.PortalApprovalStatus) bool {
+	switch status {
+	case store.PortalApprovalDenied:
+		return tc.main.Config.PortalApproval.Cleanup.OnDeny.DeletePortal
+	case store.PortalApprovalPending:
+		return tc.main.Config.PortalApproval.Cleanup.OnUnallow.DeletePortal
+	default:
+		return false
+	}
+}
+
+func (tc *TelegramClient) deleteApprovalPortal(ce *commands.Event, item store.PortalApproval) (bool, error) {
+	portalKey := networkid.PortalKey{ID: item.PortalID, Receiver: item.PortalReceiver}
+	portal, err := tc.main.Bridge.GetExistingPortalByKey(ce.Ctx, portalKey)
+	if err != nil {
+		return false, fmt.Errorf("failed to get Matrix portal: %w", err)
+	} else if portal == nil {
+		return false, nil
+	}
+
+	roomID := portal.MXID
+	if err = portal.Delete(ce.Ctx); err != nil {
+		return false, fmt.Errorf("failed to delete bridge portal row: %w", err)
+	}
+	if roomID != "" {
+		if err = ce.Bot.DeleteRoom(ce.Ctx, roomID, false); err != nil {
+			return true, fmt.Errorf("failed to clean up Matrix room %s: %w", roomID, err)
+		}
+	}
+	return true, nil
 }
 
 func approvalStatusAllowed(status store.PortalApprovalStatus, allowed []store.PortalApprovalStatus) bool {

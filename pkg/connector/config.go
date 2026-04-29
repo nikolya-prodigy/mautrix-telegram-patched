@@ -76,6 +76,15 @@ type PortalApprovalConfig struct {
 		Enabled     bool `yaml:"enabled"`
 		MaxAgeHours int  `yaml:"max_age_hours"`
 	} `yaml:"pending"`
+
+	Cleanup struct {
+		OnDeny struct {
+			DeletePortal bool `yaml:"delete_portal"`
+		} `yaml:"on_deny"`
+		OnUnallow struct {
+			DeletePortal bool `yaml:"delete_portal"`
+		} `yaml:"on_unallow"`
+	} `yaml:"cleanup"`
 }
 
 type TelegramConfig struct {
@@ -199,6 +208,8 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "portal_approval", "auto_create", "channels")
 	helper.Copy(up.Bool, "portal_approval", "pending", "enabled")
 	helper.Copy(up.Int, "portal_approval", "pending", "max_age_hours")
+	helper.Copy(up.Bool, "portal_approval", "cleanup", "on_deny", "delete_portal")
+	helper.Copy(up.Bool, "portal_approval", "cleanup", "on_unallow", "delete_portal")
 	helper.Copy(up.Int, "sync", "update_limit")
 	helper.Copy(up.Int, "sync", "create_limit")
 	helper.Copy(up.Int, "sync", "login_sync_limit")
