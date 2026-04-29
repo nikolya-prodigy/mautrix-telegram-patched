@@ -337,6 +337,7 @@ func fnApprovalList(status store.PortalApprovalStatus) func(*commands.Event) {
 
 		var builder strings.Builder
 		fmt.Fprintf(&builder, "%s Telegram chats:\n", approvalStatusTitle(status))
+		firstSection := true
 		printed := map[string]struct{}{}
 		for _, peerType := range []string{string(ids.PeerTypeUser), string(ids.PeerTypeChat), "supergroup", string(ids.PeerTypeChannel)} {
 			printedAny := false
@@ -346,7 +347,8 @@ func fnApprovalList(status store.PortalApprovalStatus) func(*commands.Event) {
 				}
 				if !printedAny {
 					printedAny = true
-					fmt.Fprintf(&builder, "\n%s:\n", approvalPeerTypeTitle(peerType))
+					writeApprovalSectionHeader(&builder, approvalPeerTypeTitle(peerType), firstSection)
+					firstSection = false
 				}
 				builder.WriteString(formatApprovalItem(item))
 				printed[item.PeerType] = struct{}{}
@@ -358,7 +360,8 @@ func fnApprovalList(status store.PortalApprovalStatus) func(*commands.Event) {
 			}
 			if _, ok := printed[""]; !ok {
 				printed[""] = struct{}{}
-				fmt.Fprintf(&builder, "\n%s:\n", approvalPeerTypeTitle(item.PeerType))
+				writeApprovalSectionHeader(&builder, approvalPeerTypeTitle(item.PeerType), firstSection)
+				firstSection = false
 			}
 			builder.WriteString(formatApprovalItem(item))
 		}
@@ -525,6 +528,14 @@ func approvalPeerTypeTitle(peerType string) string {
 	}
 }
 
+func writeApprovalSectionHeader(builder *strings.Builder, title string, first bool) {
+	if first {
+		fmt.Fprintf(builder, "\n**%s:**\n\n", format.EscapeMarkdown(title))
+	} else {
+		fmt.Fprintf(builder, "\n\n**%s:**\n\n", format.EscapeMarkdown(title))
+	}
+}
+
 func approvalDisplayName(item store.PortalApproval) string {
 	if item.Username != "" {
 		return fmt.Sprintf("%s (@%s)", item.Title, item.Username)
@@ -534,7 +545,7 @@ func approvalDisplayName(item store.PortalApproval) string {
 
 func formatApprovalItem(item store.PortalApproval) string {
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "%d. **%s**\n", item.ApprovalID, format.EscapeMarkdown(item.Title))
+	fmt.Fprintf(&builder, "%d\\. **%s**\n", item.ApprovalID, format.EscapeMarkdown(item.Title))
 	if item.Username != "" {
 		fmt.Fprintf(&builder, "   username: @%s\n", format.EscapeMarkdown(item.Username))
 	} else {
