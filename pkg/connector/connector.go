@@ -43,7 +43,7 @@ func (tc *TelegramConnector) Init(bridge *bridgev2.Bridge) {
 	tc.Bridge = bridge
 	tc.Bridge.Commands.(*commands.Processor).AddHandlers(
 		cmdSyncChats, cmdEmojiPack, cmdUpgrade, cmdJoin,
-		cmdPending, cmdAllowed, cmdDenied, cmdAllow, cmdDeny, cmdUnallow,
+		cmdPending, cmdAllowed, cmdDenied, cmdAllow, cmdDeny, cmdUnallow, cmdUndeny,
 	)
 }
 

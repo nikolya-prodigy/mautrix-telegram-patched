@@ -23,7 +23,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/rs/zerolog"
 	"golang.org/x/net/html"
@@ -256,7 +255,7 @@ var cmdDenied = &commands.FullHandler{
 }
 
 var cmdAllow = &commands.FullHandler{
-	Func: fnApprovalSetStatus(store.PortalApprovalAllowed, true, store.PortalApprovalPending),
+	Func: fnApprovalSetStatus(store.PortalApprovalAllowed, true, false, store.PortalApprovalPending),
 	Name: "allow",
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
@@ -267,7 +266,7 @@ var cmdAllow = &commands.FullHandler{
 }
 
 var cmdDeny = &commands.FullHandler{
-	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false, store.PortalApprovalPending, store.PortalApprovalAllowed, store.PortalApprovalDenied),
+	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false, true, store.PortalApprovalPending, store.PortalApprovalAllowed, store.PortalApprovalDenied),
 	Name: "deny",
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
@@ -278,12 +277,24 @@ var cmdDeny = &commands.FullHandler{
 }
 
 var cmdUnallow = &commands.FullHandler{
-	Func:    fnApprovalSetStatus(store.PortalApprovalPending, false, store.PortalApprovalAllowed, store.PortalApprovalPending),
+	Func:    fnApprovalSetStatus(store.PortalApprovalPending, false, true, store.PortalApprovalAllowed, store.PortalApprovalPending),
 	Name:    "unallow",
 	Aliases: []string{"disallow"},
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
 		Description: "Move a Telegram chat back to pending and optionally clean up its portal",
+		Args:        "<number>",
+	},
+	RequiresLogin: true,
+}
+
+var cmdUndeny = &commands.FullHandler{
+	Func:    fnApprovalSetStatus(store.PortalApprovalPending, false, false, store.PortalApprovalDenied, store.PortalApprovalPending),
+	Name:    "undeny",
+	Aliases: []string{"pardon"},
+	Help: commands.HelpMeta{
+		Section:     helpSectionPortalApproval,
+		Description: "Move a denied Telegram chat back to pending",
 		Args:        "<number>",
 	},
 	RequiresLogin: true,
@@ -355,14 +366,14 @@ func fnApprovalList(status store.PortalApprovalStatus) func(*commands.Event) {
 	}
 }
 
-func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool, allowedSourceStatuses ...store.PortalApprovalStatus) func(*commands.Event) {
+func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal, cleanupPortal bool, allowedSourceStatuses ...store.PortalApprovalStatus) func(*commands.Event) {
 	return func(ce *commands.Event) {
 		client := approvalCommandClient(ce)
 		if client == nil {
 			return
 		}
 		if len(ce.Args) != 1 {
-			ce.Reply("Usage: `$cmdprefix allow|deny|unallow <number>`")
+			ce.Reply("Usage: `$cmdprefix allow|deny|unallow|undeny <number>`")
 			return
 		}
 		approvalID, err := strconv.ParseInt(ce.Args[0], 10, 64)
@@ -418,7 +429,7 @@ func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool, a
 			}
 			ce.Reply("Approved %s and requested Matrix room creation.", approvalDisplayName(*item))
 		} else {
-			if client.shouldDeleteApprovalPortal(status) {
+			if cleanupPortal && client.shouldDeleteApprovalPortal(status) {
 				deleted, err := client.deleteApprovalPortal(ce, *item)
 				if err != nil {
 					ce.Log.Err(err).Int64("approval_id", approvalID).Msg("Failed to delete Telegram approval portal")
@@ -522,22 +533,26 @@ func approvalDisplayName(item store.PortalApproval) string {
 }
 
 func formatApprovalItem(item store.PortalApproval) string {
-	seenAt := time.Unix(item.LastSeenTS, 0).Format("2006-01-02 15:04")
 	var builder strings.Builder
-	fmt.Fprintf(
-		&builder,
-		"%d. %s\n",
-		item.ApprovalID,
-		format.SafeMarkdownCode(approvalDisplayName(item)),
-	)
-	fmt.Fprintf(
-		&builder,
-		"   portal: %s, last: %s, event: %s\n",
-		format.SafeMarkdownCode(string(item.PortalID)),
-		format.SafeMarkdownCode(seenAt),
-		format.SafeMarkdownCode(item.LastEvent),
-	)
+	fmt.Fprintf(&builder, "%d. **%s**\n", item.ApprovalID, format.EscapeMarkdown(item.Title))
+	if item.Username != "" {
+		fmt.Fprintf(&builder, "   username: @%s\n", format.EscapeMarkdown(item.Username))
+	} else {
+		builder.WriteString("   username: -\n")
+	}
+	fmt.Fprintf(&builder, "   id: %s\n\n", format.EscapeMarkdown(approvalTelegramID(item)))
 	return builder.String()
+}
+
+func approvalTelegramID(item store.PortalApproval) string {
+	switch item.PeerType {
+	case "supergroup", string(ids.PeerTypeChannel):
+		return fmt.Sprintf("-100%d", item.EntityID)
+	case string(ids.PeerTypeChat):
+		return fmt.Sprintf("-%d", item.EntityID)
+	default:
+		return fmt.Sprintf("%d", item.EntityID)
+	}
 }
 
 var cmdEmojiPack = &commands.FullHandler{
