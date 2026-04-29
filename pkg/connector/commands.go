@@ -261,30 +261,30 @@ var cmdAllow = &commands.FullHandler{
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
 		Description: "Approve a Telegram chat from the pending list and create its portal",
-		Args:        "<pending number>",
+		Args:        "<number>",
 	},
 	RequiresLogin: true,
 }
 
 var cmdDeny = &commands.FullHandler{
-	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false, store.PortalApprovalPending, store.PortalApprovalAllowed),
+	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false, store.PortalApprovalPending, store.PortalApprovalAllowed, store.PortalApprovalDenied),
 	Name: "deny",
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
-		Description: "Deny a Telegram chat from the pending list",
-		Args:        "<pending number>",
+		Description: "Deny a Telegram chat and optionally clean up its portal",
+		Args:        "<number>",
 	},
 	RequiresLogin: true,
 }
 
 var cmdUnallow = &commands.FullHandler{
-	Func:    fnApprovalSetStatus(store.PortalApprovalPending, false, store.PortalApprovalAllowed),
+	Func:    fnApprovalSetStatus(store.PortalApprovalPending, false, store.PortalApprovalAllowed, store.PortalApprovalPending),
 	Name:    "unallow",
 	Aliases: []string{"disallow"},
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
-		Description: "Move an approved Telegram chat back to pending",
-		Args:        "<allowed number>",
+		Description: "Move a Telegram chat back to pending and optionally clean up its portal",
+		Args:        "<number>",
 	},
 	RequiresLogin: true,
 }
