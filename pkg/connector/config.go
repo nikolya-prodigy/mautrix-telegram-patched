@@ -73,7 +73,8 @@ type PortalApprovalConfig struct {
 	} `yaml:"auto_create"`
 
 	Pending struct {
-		Enabled bool `yaml:"enabled"`
+		Enabled     bool `yaml:"enabled"`
+		MaxAgeHours int  `yaml:"max_age_hours"`
 	} `yaml:"pending"`
 }
 
@@ -197,6 +198,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "portal_approval", "auto_create", "supergroups")
 	helper.Copy(up.Bool, "portal_approval", "auto_create", "channels")
 	helper.Copy(up.Bool, "portal_approval", "pending", "enabled")
+	helper.Copy(up.Int, "portal_approval", "pending", "max_age_hours")
 	helper.Copy(up.Int, "sync", "update_limit")
 	helper.Copy(up.Int, "sync", "create_limit")
 	helper.Copy(up.Int, "sync", "login_sync_limit")

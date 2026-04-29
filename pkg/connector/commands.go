@@ -256,7 +256,7 @@ var cmdDenied = &commands.FullHandler{
 }
 
 var cmdAllow = &commands.FullHandler{
-	Func: fnApprovalSetStatus(store.PortalApprovalAllowed, true),
+	Func: fnApprovalSetStatus(store.PortalApprovalAllowed, true, store.PortalApprovalPending),
 	Name: "allow",
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
@@ -267,7 +267,7 @@ var cmdAllow = &commands.FullHandler{
 }
 
 var cmdDeny = &commands.FullHandler{
-	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false),
+	Func: fnApprovalSetStatus(store.PortalApprovalDenied, false, store.PortalApprovalPending, store.PortalApprovalAllowed),
 	Name: "deny",
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
@@ -278,12 +278,12 @@ var cmdDeny = &commands.FullHandler{
 }
 
 var cmdUnallow = &commands.FullHandler{
-	Func:    fnApprovalSetStatus(store.PortalApprovalDenied, false),
+	Func:    fnApprovalSetStatus(store.PortalApprovalPending, false, store.PortalApprovalAllowed),
 	Name:    "unallow",
 	Aliases: []string{"disallow"},
 	Help: commands.HelpMeta{
 		Section:     helpSectionPortalApproval,
-		Description: "Move an approved Telegram chat to denied",
+		Description: "Move an approved Telegram chat back to pending",
 		Args:        "<allowed number>",
 	},
 	RequiresLogin: true,
@@ -307,6 +307,11 @@ func fnApprovalList(status store.PortalApprovalStatus) func(*commands.Event) {
 	return func(ce *commands.Event) {
 		client := approvalCommandClient(ce)
 		if client == nil {
+			return
+		}
+		if err := client.cleanupOldPendingPortalApprovals(ce.Ctx); err != nil {
+			ce.Log.Err(err).Msg("Failed to clean old pending Telegram portal approvals")
+			ce.Reply("Failed to clean old pending Telegram chats: %v", err)
 			return
 		}
 		items, err := client.main.Store.Approval.GetByStatus(ce.Ctx, client.telegramUserID, status)
@@ -350,7 +355,7 @@ func fnApprovalList(status store.PortalApprovalStatus) func(*commands.Event) {
 	}
 }
 
-func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool) func(*commands.Event) {
+func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool, allowedSourceStatuses ...store.PortalApprovalStatus) func(*commands.Event) {
 	return func(ce *commands.Event) {
 		client := approvalCommandClient(ce)
 		if client == nil {
@@ -365,6 +370,11 @@ func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool) f
 			ce.Reply("Invalid approval number: %s", format.SafeMarkdownCode(ce.Args[0]))
 			return
 		}
+		if err = client.cleanupOldPendingPortalApprovals(ce.Ctx); err != nil {
+			ce.Log.Err(err).Msg("Failed to clean old pending Telegram portal approvals")
+			ce.Reply("Failed to clean old pending Telegram chats: %v", err)
+			return
+		}
 		item, err := client.main.Store.Approval.GetByID(ce.Ctx, client.telegramUserID, approvalID)
 		if err != nil {
 			ce.Log.Err(err).Int64("approval_id", approvalID).Msg("Failed to fetch Telegram portal approval")
@@ -372,6 +382,13 @@ func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool) f
 			return
 		} else if item == nil {
 			ce.Reply("No Telegram approval item found with number %d.", approvalID)
+			return
+		}
+		if !approvalStatusAllowed(item.Status, allowedSourceStatuses) {
+			ce.Reply(
+				"Approval item %d is currently %s, not %s. Run `$cmdprefix %s` to refresh the list.",
+				approvalID, item.Status, approvalAllowedSourceStatusText(allowedSourceStatuses), item.Status,
+			)
 			return
 		}
 		if err = client.main.Store.Approval.SetStatus(ce.Ctx, client.telegramUserID, approvalID, status); err != nil {
@@ -401,9 +418,29 @@ func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal bool) f
 			}
 			ce.Reply("Approved %s and requested Matrix room creation.", approvalDisplayName(*item))
 		} else {
-			ce.Reply("Marked %s as %s.", approvalDisplayName(*item), status)
+			ce.Reply("Moved %s to %s.", approvalDisplayName(*item), status)
 		}
 	}
+}
+
+func approvalStatusAllowed(status store.PortalApprovalStatus, allowed []store.PortalApprovalStatus) bool {
+	for _, allowedStatus := range allowed {
+		if status == allowedStatus {
+			return true
+		}
+	}
+	return false
+}
+
+func approvalAllowedSourceStatusText(statuses []store.PortalApprovalStatus) string {
+	if len(statuses) == 0 {
+		return "any status"
+	}
+	parts := make([]string, len(statuses))
+	for i, status := range statuses {
+		parts[i] = string(status)
+	}
+	return strings.Join(parts, " or ")
 }
 
 func approvalStatusTitle(status store.PortalApprovalStatus) string {

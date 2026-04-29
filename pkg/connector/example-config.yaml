@@ -75,6 +75,9 @@ portal_approval:
         channels: false
     pending:
         enabled: true
+        # Automatically remove pending approval entries that haven't been seen
+        # for this many hours. Set to 0 to keep them forever.
+        max_age_hours: 72
 
 sync:
     # Number of most recently active dialogs to check when syncing chats.

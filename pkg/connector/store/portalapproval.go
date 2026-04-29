@@ -96,7 +96,8 @@ const (
 		WHERE user_id=$1 AND status=$2
 		ORDER BY approval_id
 	`
-	setPortalApprovalStatusQuery = "UPDATE telegram_portal_approval SET status=$3, last_seen_ts=$4 WHERE user_id=$1 AND approval_id=$2"
+	setPortalApprovalStatusQuery        = "UPDATE telegram_portal_approval SET status=$3, last_seen_ts=$4 WHERE user_id=$1 AND approval_id=$2"
+	deleteOldPendingPortalApprovalQuery = "DELETE FROM telegram_portal_approval WHERE user_id=$1 AND status=$2 AND last_seen_ts<$3"
 )
 
 var portalApprovalScanner = dbutil.ConvertRowFn[PortalApproval](func(row dbutil.Scannable) (item PortalApproval, err error) {
@@ -167,4 +168,16 @@ func (q *PortalApprovalQuery) GetByStatus(ctx context.Context, userID int64, sta
 func (q *PortalApprovalQuery) SetStatus(ctx context.Context, userID, approvalID int64, status PortalApprovalStatus) error {
 	_, err := q.db.Exec(ctx, setPortalApprovalStatusQuery, userID, approvalID, status, time.Now().Unix())
 	return err
+}
+
+func (q *PortalApprovalQuery) DeletePendingOlderThan(ctx context.Context, userID, cutoffTS int64) (int64, error) {
+	res, err := q.db.Exec(ctx, deleteOldPendingPortalApprovalQuery, userID, PortalApprovalPending, cutoffTS)
+	if err != nil {
+		return 0, err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return 0, nil
+	}
+	return count, nil
 }

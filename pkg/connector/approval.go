@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -127,11 +128,8 @@ func (tc *TelegramClient) ensurePortalApproved(ctx context.Context, portalKey ne
 	if !tc.main.Config.PortalApproval.Enabled {
 		return true, nil
 	}
-	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, portalKey)
-	if err != nil {
+	if err := tc.cleanupOldPendingPortalApprovals(ctx); err != nil {
 		return false, err
-	} else if portal != nil && portal.MXID != "" {
-		return true, nil
 	}
 	approvalKey := tc.portalApprovalStorageKey(portalKey)
 	userID := tc.telegramUserID
@@ -141,8 +139,14 @@ func (tc *TelegramClient) ensurePortalApproved(ctx context.Context, portalKey ne
 	}
 	if item != nil && item.Status == store.PortalApprovalAllowed {
 		return true, nil
-	} else if item != nil && item.Status == store.PortalApprovalDenied {
+	} else if item != nil {
 		return false, nil
+	}
+	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, portalKey)
+	if err != nil {
+		return false, err
+	} else if portal != nil && portal.MXID != "" {
+		return true, nil
 	}
 
 	status := store.PortalApprovalPending
@@ -183,4 +187,22 @@ func (tc *TelegramClient) ensurePortalApprovedForPeer(ctx context.Context, porta
 
 func (tc *TelegramClient) ensurePortalApprovedForObject(ctx context.Context, portalKey networkid.PortalKey, chat any, lastEvent string) (bool, error) {
 	return tc.ensurePortalApproved(ctx, portalKey, tc.portalApprovalInfoFromObject(portalKey, chat), lastEvent)
+}
+
+func (tc *TelegramClient) cleanupOldPendingPortalApprovals(ctx context.Context) error {
+	maxAgeHours := tc.main.Config.PortalApproval.Pending.MaxAgeHours
+	if maxAgeHours <= 0 {
+		return nil
+	}
+	cutoff := time.Now().Add(-time.Duration(maxAgeHours) * time.Hour).Unix()
+	deleted, err := tc.main.Store.Approval.DeletePendingOlderThan(ctx, tc.telegramUserID, cutoff)
+	if err != nil {
+		return err
+	} else if deleted > 0 {
+		zerolog.Ctx(ctx).Info().
+			Int("max_age_hours", maxAgeHours).
+			Int64("deleted", deleted).
+			Msg("Cleaned old pending Telegram portal approval entries")
+	}
+	return nil
 }
