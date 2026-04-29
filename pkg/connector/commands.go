@@ -467,6 +467,9 @@ func (tc *TelegramClient) deleteApprovalPortal(ce *commands.Event, item store.Po
 	} else if portal == nil {
 		return false, nil
 	}
+	if err = tc.ensureApprovalPortalNotShared(ce, portalKey); err != nil {
+		return false, err
+	}
 
 	roomID := portal.MXID
 	if err = portal.Delete(ce.Ctx); err != nil {
@@ -478,6 +481,19 @@ func (tc *TelegramClient) deleteApprovalPortal(ce *commands.Event, item store.Po
 		}
 	}
 	return true, nil
+}
+
+func (tc *TelegramClient) ensureApprovalPortalNotShared(ce *commands.Event, portalKey networkid.PortalKey) error {
+	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllInPortal(ce.Ctx, portalKey)
+	if err != nil {
+		return fmt.Errorf("failed to check portal users: %w", err)
+	}
+	for _, userPortal := range userPortals {
+		if userPortal.LoginID != tc.userLogin.ID {
+			return fmt.Errorf("portal is also used by another login (%s), not deleting shared Matrix room", userPortal.LoginID)
+		}
+	}
+	return nil
 }
 
 func approvalStatusAllowed(status store.PortalApprovalStatus, allowed []store.PortalApprovalStatus) bool {
