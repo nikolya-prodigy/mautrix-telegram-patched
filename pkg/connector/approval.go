@@ -28,6 +28,7 @@ type portalApprovalInfo struct {
 	TopicID  int
 	Title    string
 	Username string
+	IsBot    bool
 }
 
 func (tc *TelegramClient) portalApprovalInfoFromPeer(peer tg.PeerClass, topicID int, entities tg.Entities) portalApprovalInfo {
@@ -39,6 +40,7 @@ func (tc *TelegramClient) portalApprovalInfoFromPeer(peer tg.PeerClass, topicID 
 		if user, ok := entities.Users[typed.UserID]; ok {
 			info.Title = strings.TrimSpace(user.FirstName + " " + user.LastName)
 			info.Username = user.Username
+			info.IsBot = user.Bot
 		}
 	case *tg.PeerChat:
 		info.PeerType = string(ids.PeerTypeChat)
@@ -75,6 +77,7 @@ func (tc *TelegramClient) portalApprovalInfoFromObject(portalKey networkid.Porta
 	case *tg.User:
 		info.Title = strings.TrimSpace(chat.FirstName + " " + chat.LastName)
 		info.Username = chat.Username
+		info.IsBot = chat.Bot
 	case *tg.Chat:
 		info.Title = chat.Title
 	case *tg.Channel:
@@ -104,6 +107,12 @@ func (tc *TelegramClient) portalApprovalAutoAllowed(info portalApprovalInfo) boo
 	cfg := tc.main.Config.PortalApproval.AutoCreate
 	switch info.PeerType {
 	case string(ids.PeerTypeUser):
+		if info.IsBot {
+			if cfg.Bots != nil {
+				return *cfg.Bots
+			}
+			return cfg.PrivateChats
+		}
 		return cfg.PrivateChats
 	case string(ids.PeerTypeChat):
 		return cfg.Groups

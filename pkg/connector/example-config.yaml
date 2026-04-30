@@ -70,6 +70,8 @@ portal_approval:
     enabled: false
     auto_create:
         private_chats: true
+        # Bot direct chats are controlled separately from normal private chats.
+        bots: true
         groups: false
         supergroups: false
         channels: false

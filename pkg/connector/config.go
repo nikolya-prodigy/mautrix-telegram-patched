@@ -66,10 +66,11 @@ type PortalApprovalConfig struct {
 	Enabled bool `yaml:"enabled"`
 
 	AutoCreate struct {
-		PrivateChats bool `yaml:"private_chats"`
-		Groups       bool `yaml:"groups"`
-		Supergroups  bool `yaml:"supergroups"`
-		Channels     bool `yaml:"channels"`
+		PrivateChats bool  `yaml:"private_chats"`
+		Bots         *bool `yaml:"bots"`
+		Groups       bool  `yaml:"groups"`
+		Supergroups  bool  `yaml:"supergroups"`
+		Channels     bool  `yaml:"channels"`
 	} `yaml:"auto_create"`
 
 	Pending struct {
@@ -211,6 +212,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Str|up.Null, "proxy", "password")
 	helper.Copy(up.Bool, "portal_approval", "enabled")
 	helper.Copy(up.Bool, "portal_approval", "auto_create", "private_chats")
+	helper.Copy(up.Bool, "portal_approval", "auto_create", "bots")
 	helper.Copy(up.Bool, "portal_approval", "auto_create", "groups")
 	helper.Copy(up.Bool, "portal_approval", "auto_create", "supergroups")
 	helper.Copy(up.Bool, "portal_approval", "auto_create", "channels")
