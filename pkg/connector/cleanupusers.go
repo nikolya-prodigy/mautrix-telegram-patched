@@ -34,6 +34,7 @@ const (
 		SELECT COUNT(*)
 		FROM ghost AS g
 		WHERE g.bridge_id=$1
+		  AND g.id<>''
 		  AND g.id NOT LIKE 'channel-%'
 		  AND NOT EXISTS (SELECT 1 FROM user_login AS ul WHERE ul.bridge_id=g.bridge_id AND ul.id=g.id)
 		  AND NOT EXISTS (SELECT 1 FROM portal AS p WHERE p.bridge_id=g.bridge_id AND p.other_user_id=g.id)
@@ -44,6 +45,7 @@ const (
 		SELECT g.id, g.name, g.is_bot
 		FROM ghost AS g
 		WHERE g.bridge_id=$1
+		  AND g.id<>''
 		  AND g.id NOT LIKE 'channel-%'
 		  AND NOT EXISTS (SELECT 1 FROM user_login AS ul WHERE ul.bridge_id=g.bridge_id AND ul.id=g.id)
 		  AND NOT EXISTS (SELECT 1 FROM portal AS p WHERE p.bridge_id=g.bridge_id AND p.other_user_id=g.id)
@@ -192,7 +194,8 @@ func deleteCleanupUserCandidates(ce *commands.Event, candidates []cleanupUserCan
 func cleanupTelegramGhostIndexes(ctx context.Context, tc *TelegramConnector, userID networkid.UserID) error {
 	peerType, entityID, err := ids.ParseUserID(userID)
 	if err != nil {
-		return fmt.Errorf("failed to parse Telegram ghost ID %s: %w", userID, err)
+		// Corrupt unused ghost rows should not block cleanup of the bridge row itself.
+		return nil
 	}
 	if err = tc.Store.Username.Set(ctx, peerType, entityID, ""); err != nil {
 		return fmt.Errorf("failed to clear username index for %s: %w", userID, err)
