@@ -27,7 +27,7 @@ require (
 	github.com/rs/zerolog v1.35.0
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.18.0
-	go.mau.fi/util v0.9.9-0.20260430092340-8772e7714ea5
+	go.mau.fi/util v0.9.9-0.20260501211038-7535d5590b78
 	go.mau.fi/webp v0.2.0
 	go.mau.fi/zerozap v0.1.2
 	go.opentelemetry.io/otel v1.42.0
@@ -42,7 +42,7 @@ require (
 	golang.org/x/sync v0.20.0
 	golang.org/x/tools v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.27.1-0.20260430124810-125ac2c48014
+	maunium.net/go/mautrix v0.27.1-0.20260501211233-3b91c736c6ea
 	rsc.io/qr v0.2.0
 )
 
@@ -70,6 +70,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/yuin/goldmark v1.8.2 // indirect
+	go.mau.fi/customresolver v0.0.0-20260501203937-b4612b0456c7 // indirect
 	go.mau.fi/zeroconfig v0.2.0 // indirect
 	go.uber.org/ratelimit v0.3.1 // indirect
 	golang.org/x/mod v0.35.0 // indirect

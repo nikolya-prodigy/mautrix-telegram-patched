@@ -80,6 +80,7 @@ var (
 	_ bridgev2.DeleteChatHandlingNetworkAPI     = (*TelegramClient)(nil)
 	_ bridgev2.RoomNameHandlingNetworkAPI       = (*TelegramClient)(nil)
 	_ bridgev2.RoomAvatarHandlingNetworkAPI     = (*TelegramClient)(nil)
+	_ bridgev2.MembershipHandlingNetworkAPI     = (*TelegramClient)(nil)
 )
 
 func getMediaFilename(content *event.MessageEventContent) (filename string) {
@@ -382,7 +383,10 @@ func (tc *TelegramClient) transferMediaToTelegram(ctx context.Context, content *
 	}, nil
 }
 
-func (tc *TelegramClient) humaniseSendError(err error) bridgev2.MessageStatus {
+func (tc *TelegramClient) humaniseSendError(err error) error {
+	if err == nil {
+		return nil
+	}
 	status := bridgev2.WrapErrorInStatus(err).
 		WithErrorReason(event.MessageStatusNetworkError).
 		WithMessage(humanise.Error(err))
@@ -1295,4 +1299,146 @@ func (tc *TelegramClient) HandleMatrixRoomAvatar(ctx context.Context, msg *bridg
 	default:
 		return false, fmt.Errorf("unsupported peer type %s for changing room avatar", peerType)
 	}
+}
+
+func wrapUnsupportedError(err error) bridgev2.MessageStatus {
+	return bridgev2.WrapErrorInStatus(err).
+		WithErrorReason(event.MessageStatusUnsupported).
+		WithIsCertain(true).
+		WithSendNotice(false)
+}
+
+func (tc *TelegramClient) HandleMatrixMembership(ctx context.Context, msg *bridgev2.MatrixMembershipChange) (*bridgev2.MatrixMembershipResult, error) {
+	if (msg.Type.IsSelf && msg.OrigSender != nil) || msg.Type == bridgev2.ProfileChange {
+		return nil, nil
+	}
+	chatPeerType, chatID, _, err := ids.ParsePortalID(msg.Portal.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse portal ID: %w", err)
+	}
+	var inputChannel *tg.InputChannel
+	switch chatPeerType {
+	case ids.PeerTypeUser:
+		return nil, nil
+	case ids.PeerTypeChannel:
+		if accessHash, err := tc.ScopedStore.GetAccessHash(ctx, ids.PeerTypeChannel, chatID); err != nil {
+			return nil, fmt.Errorf("failed to get access hash for channel: %w", err)
+		} else {
+			inputChannel = &tg.InputChannel{ChannelID: chatID, AccessHash: accessHash}
+		}
+	case ids.PeerTypeChat:
+		// ok
+	default:
+		return nil, wrapUnsupportedError(fmt.Errorf("unsupported chat peer type %s for membership changes", chatPeerType))
+	}
+	var targetPeerType ids.PeerType
+	var targetUserID int64
+	switch target := msg.Target.(type) {
+	case *bridgev2.UserLogin:
+		targetPeerType = ids.PeerTypeUser
+		targetUserID, err = ids.ParseUserLoginID(target.ID)
+	case *bridgev2.Ghost:
+		targetPeerType, targetUserID, err = ids.ParseUserID(target.ID)
+	default:
+		return nil, wrapUnsupportedError(fmt.Errorf("unknown membership target type %T", msg.Target))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse target login ID: %w", err)
+	}
+	targetAccessHash, err := tc.ScopedStore.GetAccessHash(ctx, targetPeerType, targetUserID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get access hash for target: %w", err)
+	}
+	var targetInputPeer tg.InputPeerClass
+	var targetInputUser *tg.InputUser
+	switch targetPeerType {
+	case ids.PeerTypeUser:
+		targetInputPeer = &tg.InputPeerUser{UserID: targetUserID, AccessHash: targetAccessHash}
+		targetInputUser = &tg.InputUser{UserID: targetUserID, AccessHash: targetAccessHash}
+	case ids.PeerTypeChannel:
+		targetInputPeer = &tg.InputPeerChannel{ChannelID: targetUserID, AccessHash: targetAccessHash}
+	default:
+		return nil, wrapUnsupportedError(fmt.Errorf("unsupported target peer type %s for membership changes", targetPeerType))
+	}
+	if chatPeerType == ids.PeerTypeChannel {
+		switch msg.Type {
+		case bridgev2.Kick, bridgev2.RejectKnock, bridgev2.RevokeInvite, bridgev2.BanLeft, bridgev2.BanJoined, bridgev2.BanInvited, bridgev2.BanKnocked:
+			_, err = tc.client.API().ChannelsEditBanned(ctx, &tg.ChannelsEditBannedRequest{
+				Channel:      inputChannel,
+				Participant:  targetInputPeer,
+				BannedRights: tg.ChatBannedRights{ViewMessages: true},
+			})
+			if err != nil {
+				err = tc.humaniseSendError(err)
+			} else if msg.Type == bridgev2.Kick {
+				// Reset permissions to default (telegram doesn't have a dedicated kick method)
+				_, err = tc.client.API().ChannelsEditBanned(ctx, &tg.ChannelsEditBannedRequest{
+					Channel:      inputChannel,
+					Participant:  targetInputPeer,
+					BannedRights: tg.ChatBannedRights{},
+				})
+				if err != nil {
+					err = tc.humaniseSendError(err)
+					return nil, fmt.Errorf("failed to unban user to emulate kick: %w", err)
+				}
+			}
+		case bridgev2.Unban:
+			_, err = tc.client.API().ChannelsEditBanned(ctx, &tg.ChannelsEditBannedRequest{
+				Channel:      inputChannel,
+				Participant:  targetInputPeer,
+				BannedRights: tg.ChatBannedRights{},
+			})
+			err = tc.humaniseSendError(err)
+		case bridgev2.Invite, bridgev2.AcceptKnock:
+			if targetInputUser == nil {
+				return nil, wrapUnsupportedError(fmt.Errorf("can't invite non-user peer type %s", targetPeerType))
+			} else if tc.metadata.IsBot {
+				return nil, wrapUnsupportedError(fmt.Errorf("can't invite users as a bot"))
+			}
+			_, err = tc.client.API().ChannelsInviteToChannel(ctx, &tg.ChannelsInviteToChannelRequest{
+				Channel: inputChannel,
+				Users:   []tg.InputUserClass{targetInputUser},
+			})
+			err = tc.humaniseSendError(err)
+		case bridgev2.Join, bridgev2.Knock:
+			_, err = tc.client.API().ChannelsJoinChannel(ctx, inputChannel)
+			err = tc.humaniseSendError(err)
+		case bridgev2.Leave, bridgev2.RetractKnock, bridgev2.RejectInvite:
+			_, err = tc.client.API().ChannelsLeaveChannel(ctx, inputChannel)
+			err = tc.humaniseSendError(err)
+		default:
+			err = wrapUnsupportedError(fmt.Errorf("unsupported channel membership change type %s -> %s", msg.Type.From, msg.Type.To))
+		}
+	} else {
+		switch msg.Type {
+		case bridgev2.Kick, bridgev2.RejectKnock, bridgev2.RevokeInvite, bridgev2.BanLeft, bridgev2.BanJoined, bridgev2.BanInvited, bridgev2.BanKnocked,
+			bridgev2.Leave, bridgev2.RetractKnock, bridgev2.RejectInvite:
+			_, err = tc.client.API().MessagesDeleteChatUser(ctx, &tg.MessagesDeleteChatUserRequest{
+				ChatID: chatID,
+				UserID: targetInputUser,
+			})
+			err = tc.humaniseSendError(err)
+		case bridgev2.Invite, bridgev2.AcceptKnock:
+			if targetInputUser == nil {
+				return nil, wrapUnsupportedError(fmt.Errorf("can't invite non-user peer type %s", targetPeerType))
+			} else if tc.metadata.IsBot {
+				return nil, wrapUnsupportedError(fmt.Errorf("can't invite users as a bot"))
+			}
+			_, err = tc.client.API().MessagesAddChatUser(ctx, &tg.MessagesAddChatUserRequest{
+				ChatID:   chatID,
+				UserID:   targetInputUser,
+				FwdLimit: 50,
+			})
+			err = tc.humaniseSendError(err)
+		case bridgev2.Join, bridgev2.Knock:
+			// TODO could maybe join if there's a saved invite link in the bridge db?
+			fallthrough
+		case bridgev2.Unban:
+			// There's no way to unban in minigroups
+			fallthrough
+		default:
+			err = wrapUnsupportedError(fmt.Errorf("unsupported minigroup membership change type %s -> %s", msg.Type.From, msg.Type.To))
+		}
+	}
+	return nil, err
 }
