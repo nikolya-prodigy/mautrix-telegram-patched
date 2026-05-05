@@ -88,7 +88,9 @@ func toTelegramEntity(br telegramfmt.BodyRange) tg.MessageEntityClass {
 	}
 }
 
-func Parse(ctx context.Context, parser *HTMLParser, content *event.MessageEventContent, portal *bridgev2.Portal) (string, []tg.MessageEntityClass) {
+const cutoffText = " [long message cut off]"
+
+func Parse(ctx context.Context, parser *HTMLParser, content *event.MessageEventContent, portal *bridgev2.Portal, maxLength int) (string, []tg.MessageEntityClass) {
 	if content.MsgType.IsMedia() && (content.FileName == "" || content.FileName == content.Body) {
 		// The body is the filename.
 		return "", nil
@@ -102,6 +104,10 @@ func Parse(ctx context.Context, parser *HTMLParser, content *event.MessageEventC
 	parsed := parser.Parse(content.FormattedBody, parseCtx)
 	if parsed == nil {
 		return "", nil
+	}
+	if len(parsed.String) > maxLength {
+		cutoffTextEntity := NewEntityString(cutoffText).Format(telegramfmt.Style{Type: telegramfmt.StyleItalic})
+		parsed = parsed.Substring(maxLength - len(cutoffText)).Append(cutoffTextEntity)
 	}
 	var entities []tg.MessageEntityClass
 	if len(parsed.Entities) > 0 {

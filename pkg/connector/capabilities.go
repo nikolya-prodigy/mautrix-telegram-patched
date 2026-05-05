@@ -26,7 +26,6 @@ import (
 	"go.mau.fi/util/ptr"
 	"go.mau.fi/util/variationselector"
 	"maunium.net/go/mautrix/bridgev2"
-	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/event"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
@@ -212,7 +211,7 @@ func makeTimerList() []jsontime.Milliseconds {
 var telegramTimers = makeTimerList()
 
 func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
-	baseID := "fi.mau.telegram.capabilities.2025_11_24"
+	baseID := "fi.mau.telegram.capabilities.2026_05_04"
 	feat := &event.RoomFeatures{
 		Formatting:          formattingCaps,
 		File:                fileCaps,
@@ -262,6 +261,37 @@ func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.
 	}
 	portalMetadata := portal.Metadata.(*PortalMetadata)
 	peerType, _, topicID, _ := ids.ParsePortalID(portal.ID)
+	switch peerType {
+	case ids.PeerTypeChat:
+		feat.ID += "minigroup"
+		feat.MemberActions = map[event.MemberAction]event.CapabilitySupportLevel{
+			event.MemberActionBan:    event.CapLevelFullySupported,
+			event.MemberActionInvite: event.CapLevelFullySupported,
+			event.MemberActionLeave:  event.CapLevelFullySupported,
+			// Note: unban and kick are not supported
+		}
+		// Minigroups can always be deleted
+		feat.DeleteChatForEveryone = true
+	case ids.PeerTypeChannel:
+		feat.ID += "channel"
+		feat.MemberActions = map[event.MemberAction]event.CapabilitySupportLevel{
+			event.MemberActionBan:    event.CapLevelFullySupported,
+			event.MemberActionKick:   event.CapLevelFullySupported,
+			event.MemberActionInvite: event.CapLevelFullySupported,
+			event.MemberActionLeave:  event.CapLevelFullySupported,
+		}
+		// Group creators can delete the chat for everyone, unless it's a large channel
+		if portalMetadata.ParticipantsCount < 1000 || topicID > 0 {
+			feat.DeleteChatForEveryone = true
+		}
+	case ids.PeerTypeUser:
+		baseID += "+dm"
+		feat.DeleteChat = true
+		feat.DeleteChatForEveryone = true
+		feat.State = event.StateFeatureMap{
+			event.StateBeeperDisappearingTimer.Type: {Level: event.CapLevelFullySupported},
+		}
+	}
 	if topicID > 0 {
 		baseID += "+topic"
 		// TODO do topics have other changes?
@@ -271,22 +301,6 @@ func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.
 	} else if topicID == ids.TopicIDSpaceRoom {
 		baseID += "+spaceroom"
 		feat = &event.RoomFeatures{}
-	}
-
-	switch portal.RoomType {
-	case database.RoomTypeDM:
-		baseID += "+dm"
-		feat.DeleteChat = true
-		feat.DeleteChatForEveryone = true
-		feat.State = event.StateFeatureMap{
-			event.StateBeeperDisappearingTimer.Type: {Level: event.CapLevelFullySupported},
-		}
-	default:
-		// Group creators can delete the chat for everyone, unless it's a large channel
-		if peerType == ids.PeerTypeChat || portalMetadata.ParticipantsCount < 1000 || topicID > 0 {
-			baseID += "+deletablegroup"
-			feat.DeleteChatForEveryone = true
-		}
 	}
 
 	feat.ID = baseID

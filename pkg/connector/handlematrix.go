@@ -431,6 +431,38 @@ func parseRandomID(txnID networkid.RawTransactionID) int64 {
 	return rand.Int64()
 }
 
+func (tc *TelegramClient) getMaxMessageLength(ctx context.Context, isMedia bool) (val int) {
+	if !isMedia {
+		return 4096
+	}
+	config, err := tc.getAppConfigCached(ctx)
+	if err != nil {
+		return 1024
+	}
+	myGhost, err := tc.main.Bridge.GetGhostByID(ctx, tc.userID)
+	if err != nil {
+		return 1024
+	}
+	isPremium := myGhost.Metadata.(*GhostMetadata).IsPremium
+	if isPremium {
+		val = 4096
+	} else {
+		val = 1024
+	}
+	tc.isPremiumCache.Store(isPremium)
+	var configLimit float64
+	var ok bool
+	if isPremium {
+		configLimit, ok = config["caption_length_limit_premium"].(float64)
+	} else {
+		configLimit, ok = config["caption_length_limit_default"].(float64)
+	}
+	if ok {
+		val = int(configLimit)
+	}
+	return
+}
+
 func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2.MatrixMessage) (resp *bridgev2.MatrixMessageResponse, err error) {
 	if msg.Portal.RoomType == database.RoomTypeSpace {
 		return nil, fmt.Errorf("can't send messages to space portals")
@@ -455,7 +487,7 @@ func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2
 
 	noWebpage := msg.Content.BeeperLinkPreviews != nil && len(msg.Content.BeeperLinkPreviews) == 0
 
-	message, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal)
+	message, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal, tc.getMaxMessageLength(ctx, msg.Content.MsgType.IsMedia()))
 
 	var replyTo tg.InputReplyToClass
 	if msg.ReplyTo != nil {
@@ -657,7 +689,7 @@ func (tc *TelegramClient) HandleMatrixEdit(ctx context.Context, msg *bridgev2.Ma
 		return err
 	}
 
-	message, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal)
+	message, entities := matrixfmt.Parse(ctx, tc.matrixParser, msg.Content, msg.Portal, tc.getMaxMessageLength(ctx, msg.Content.MsgType.IsMedia()))
 
 	var newContentURI id.ContentURIString
 	req := tg.MessagesEditMessageRequest{

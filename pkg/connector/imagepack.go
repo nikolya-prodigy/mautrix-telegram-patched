@@ -460,7 +460,7 @@ func (tc *TelegramClient) fnDownloadEmojiPack(ce *commands.Event) {
 	if pack.Shortcode == "" && pack.Content.Metadata.BridgedPack != nil {
 		pack.Shortcode = pack.Content.Metadata.BridgedPack.URL
 	}
-	_, err = tc.main.Bridge.Bot.SendState(ce.Ctx, spaceRoom, event.StateUnstableImagePack, pack.Shortcode, &event.Content{
+	_, err = tc.main.Bridge.Bot.SendState(ce.Ctx, spaceRoom, event.StateImagePack, pack.Shortcode, &event.Content{
 		Parsed: pack.Content,
 		Raw:    pack.Extra,
 	}, time.Now())

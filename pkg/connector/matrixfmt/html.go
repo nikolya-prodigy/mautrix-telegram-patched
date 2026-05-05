@@ -211,6 +211,29 @@ func (es *EntityString) AppendString(other string) *EntityString {
 	return es
 }
 
+func (es *EntityString) Substring(end int) *EntityString {
+	if es == nil {
+		return nil
+	}
+	if end >= len(es.String) {
+		return es
+	}
+	DebugLog("SUBSTRING %d %q %+v\n", end, es.String, es.Entities)
+	newEntities := make(telegramfmt.BodyRangeList, 0, len(es.Entities))
+	for _, ent := range es.Entities {
+		ent = *ent.TruncateEnd(end)
+		if ent.Length > 0 {
+			newEntities = append(newEntities, ent)
+		}
+	}
+	newES := &EntityString{
+		String:   es.String[:end],
+		Entities: newEntities,
+	}
+	DebugLog("  -> %q %+v\n", newES.String, newES.Entities)
+	return newES
+}
+
 type TagStack []string
 
 func (ts TagStack) Index(tag string) int {
