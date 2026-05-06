@@ -135,7 +135,8 @@ const (
 	PeerTypeChat    PeerType = "chat"
 	PeerTypeChannel PeerType = "channel"
 
-	FakePeerTypeEmoji PeerType = "emoji"
+	FakePeerTypeEmoji   PeerType = "emoji"
+	FakePeerTypeSticker PeerType = "sticker"
 )
 
 func PeerTypeFromByte(pt byte) (PeerType, error) {
@@ -148,6 +149,8 @@ func PeerTypeFromByte(pt byte) (PeerType, error) {
 		return PeerTypeChannel, nil
 	case 0x04:
 		return FakePeerTypeEmoji, nil
+	case 0x05:
+		return FakePeerTypeSticker, nil
 	default:
 		return "", fmt.Errorf("unknown peer type %d", pt)
 	}
@@ -163,6 +166,8 @@ func (pt PeerType) AsByte() byte {
 		return 0x03
 	case FakePeerTypeEmoji:
 		return 0x04
+	case FakePeerTypeSticker:
+		return 0x05
 	default:
 		panic(fmt.Errorf("unknown peer type %s", pt))
 	}

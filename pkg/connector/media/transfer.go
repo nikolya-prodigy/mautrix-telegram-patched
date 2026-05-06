@@ -331,8 +331,7 @@ func (t *ReadyTransferer) Transfer(ctx context.Context, db *store.Container, int
 		return "", nil, nil, fmt.Errorf("downloading file failed: %w", err)
 	}
 
-	needStickerConvert := t.inner.animatedStickerConfig != nil && (t.inner.fileInfo.MimeType == "application/x-tgsticker" ||
-		(t.inner.fileInfo.MimeType == "video/webm" && t.inner.animatedStickerConfig.ConvertFromWebm && t.inner.animatedStickerConfig.Target != "webm"))
+	needStickerConvert := t.expectedStickerConvertMime() != ""
 	needsDimensions := strings.HasPrefix(t.inner.fileInfo.MimeType, "image/") &&
 		t.inner.fileInfo.Width == 0 && t.inner.fileInfo.Height == 0
 
@@ -457,6 +456,10 @@ func (t *ReadyTransferer) Stream(ctx context.Context) (r io.Reader, mimeType str
 	return r, t.inner.fileInfo.MimeType, t.inner.fileInfo.Size, nil
 }
 
+func (t *ReadyTransferer) expectedStickerConvertMime() string {
+	return t.inner.animatedStickerConfig.TargetMime(t.inner.fileInfo.MimeType)
+}
+
 func (t *ReadyTransferer) ToDirectMediaResponse(ctx context.Context) (mediaproxy.GetMediaResponse, error) {
 	if t == nil {
 		return nil, fmt.Errorf("invalid direct media request")
@@ -472,7 +475,7 @@ func (t *ReadyTransferer) ToDirectMediaResponse(ctx context.Context) (mediaproxy
 		Int("size", size).
 		Msg("Started downloading media successfully")
 
-	if t.inner.animatedStickerConfig != nil {
+	if convertTarget := t.expectedStickerConvertMime(); convertTarget != "" {
 		return &mediaproxy.GetMediaResponseFile{
 			Callback: func(w *os.File) (*mediaproxy.FileMeta, error) {
 				_, err = io.Copy(w, r)
@@ -483,6 +486,10 @@ func (t *ReadyTransferer) ToDirectMediaResponse(ctx context.Context) (mediaproxy
 				if err != nil {
 					return nil, fmt.Errorf("failed to seek to start of file for sticker conversion: %w", err)
 				}
+				log.Debug().
+					Str("source_mime", mimeType).
+					Str("target_mime", convertTarget).
+					Msg("Converting sticker for direct download")
 				var converted *ConvertedSticker
 				if t.inner.fileInfo.MimeType == "video/webm" {
 					converted = t.inner.animatedStickerConfig.convertWebm(ctx, w)
@@ -515,6 +522,27 @@ func (t *ReadyTransferer) DownloadBytes(ctx context.Context) ([]byte, error) {
 	return buf.Bytes(), err
 }
 
+func (t *ReadyTransferer) StickerDirectDownloadURL(ctx context.Context, br *bridgev2.Bridge, set tg.StickerSet, loggedInUserID int64) (id.ContentURIString, *event.FileInfo, error) {
+	mediaID, err := ids.DirectMediaInfo{
+		PeerType:  ids.FakePeerTypeSticker,
+		PeerID:    set.ID,
+		UserID:    loggedInUserID,
+		MessageID: set.AccessHash, // sticker pack direct media abuses the user ID field for access hashes
+		ID:        t.loc.(*tg.InputDocumentFileLocation).ID,
+	}.AsMediaID()
+	if err != nil {
+		return "", nil, err
+	}
+	mxc, err := br.Matrix.GenerateContentURI(ctx, mediaID)
+	if t.inner.fileInfo.MimeType == "" {
+		t.inner.fileInfo.MimeType = "application/octet-stream"
+	}
+	if convertMime := t.expectedStickerConvertMime(); convertMime != "" {
+		t.inner.fileInfo.MimeType = convertMime
+	}
+	return mxc, &t.inner.fileInfo, err
+}
+
 // DirectDownloadURL returns the direct download URL for the media.
 func (t *ReadyTransferer) DirectDownloadURL(ctx context.Context, loggedInUserID int64, portal *bridgev2.Portal, msgID int, thumbnail bool, telegramMediaID int64) (id.ContentURIString, *event.FileInfo, error) {
 	peerType, chatID, _, err := ids.ParsePortalID(portal.ID)
@@ -536,8 +564,8 @@ func (t *ReadyTransferer) DirectDownloadURL(ctx context.Context, loggedInUserID 
 	if t.inner.fileInfo.MimeType == "" {
 		t.inner.fileInfo.MimeType = "application/octet-stream"
 	}
-	if t.inner.fileInfo.MimeType == "application/x-tgsticker" {
-		t.inner.fileInfo.MimeType = "video/lottie+json"
+	if convertMime := t.expectedStickerConvertMime(); convertMime != "" {
+		t.inner.fileInfo.MimeType = convertMime
 	}
 	return mxc, &t.inner.fileInfo, err
 }

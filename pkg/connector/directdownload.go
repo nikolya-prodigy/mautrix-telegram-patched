@@ -133,7 +133,23 @@ func (tc *TelegramConnector) Download(ctx context.Context, mediaID networkid.Med
 	transferer := media.NewTransferer(client.client.API())
 	var readyTransferer *media.ReadyTransferer
 
-	if info.MessageID > 0 {
+	if info.PeerType == ids.FakePeerTypeSticker {
+		pack, err := client.GetCachedStickerPack(ctx, "", &tg.InputStickerSetID{
+			ID:         info.PeerID,
+			AccessHash: info.MessageID, // sticker pack direct media abuses the user ID field for access hashes
+		}, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get sticker pack: %w", err)
+		}
+		doc, ok := pack.docs[info.ID]
+		if !ok {
+			return nil, fmt.Errorf("sticker %d not found in pack %s", info.ID, pack.meta.ShortName)
+		}
+		readyTransferer = transferer.
+			WithStickerConfig(tc.Config.AnimatedSticker).
+			WithForceWebmStickerConvert(pack.meta.Emojis).
+			WithDocument(doc, info.Thumbnail)
+	} else if info.MessageID > 0 {
 		rawMsgMedia, err := client.refetchMedia(ctx, info.PeerType, info.PeerID, int(info.MessageID))
 		if err != nil {
 			return nil, fmt.Errorf("failed to refetch media message: %w", err)

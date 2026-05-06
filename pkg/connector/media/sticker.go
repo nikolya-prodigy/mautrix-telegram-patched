@@ -39,6 +39,69 @@ type AnimatedStickerConfig struct {
 	} `yaml:"args"`
 }
 
+func (c *AnimatedStickerConfig) Supported(inputMime string) bool {
+	if inputMime == "application/x-tgsticker" {
+		switch c.Target {
+		case "disable":
+			return true
+		case "gif", "png":
+			return lottie.Supported()
+		case "webm", "webp":
+			return lottie.Supported() && ffmpeg.Supported()
+		}
+	} else if inputMime == "video/webm" {
+		if !c.ConvertFromWebm {
+			return true
+		}
+		switch c.Target {
+		case "disable", "webm":
+			return true
+		case "webp", "png", "gif":
+			return ffmpeg.Supported()
+		}
+	}
+	return false
+}
+
+func (c *AnimatedStickerConfig) TargetMime(inputMime string) string {
+	if c == nil || !c.Supported(inputMime) {
+		return ""
+	}
+	switch inputMime {
+	case "application/x-tgsticker":
+		switch c.Target {
+		case "png":
+			return "image/png"
+		case "gif":
+			return "image/gif"
+		case "webm":
+			return "video/webm"
+		case "webp":
+			return "image/webp"
+		case "disable":
+			return "video/lottie+json"
+		default:
+			return ""
+		}
+	case "video/webm":
+		if !c.ConvertFromWebm {
+			return ""
+		}
+		switch c.Target {
+		case "png":
+			return "image/png"
+		case "gif":
+			return "image/gif"
+		case "webp":
+			return "image/webp"
+		default:
+			return ""
+		}
+	default:
+		return ""
+	}
+}
+
 type ConvertedSticker struct {
 	Success           bool
 	NewPath           string
@@ -51,7 +114,7 @@ type ConvertedSticker struct {
 }
 
 func (c *AnimatedStickerConfig) convertWebm(ctx context.Context, src *os.File) *ConvertedSticker {
-	if !c.ConvertFromWebm || c.Target == "webm" {
+	if !c.ConvertFromWebm || c.Target == "webm" || c.Target == "disable" {
 		return nil
 	}
 	log := zerolog.Ctx(ctx).With().Str("animated_sticker_target", c.Target).Logger()

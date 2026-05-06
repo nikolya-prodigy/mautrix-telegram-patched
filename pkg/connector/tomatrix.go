@@ -717,7 +717,7 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 	}
 
 	var err error
-	if tc.main.useDirectMedia && (!isSticker || tc.main.Config.AnimatedSticker.Target == "disable") {
+	if tc.main.useDirectMedia {
 		content.URL, content.Info, err = mediaTransferer.DirectDownloadURL(ctx, tc.telegramUserID, portal, msgID, false, telegramMediaID)
 		if err != nil {
 			log.Err(err).Msg("Failed to create direct download URL for media")

@@ -38,12 +38,14 @@ import (
 	"go.mau.fi/util/variationselector"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/commands"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
 
+	"go.mau.fi/mautrix-telegram/pkg/connector/humanise"
 	"go.mau.fi/mautrix-telegram/pkg/connector/media"
 	"go.mau.fi/mautrix-telegram/pkg/connector/store"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/telegram/uploader"
@@ -517,10 +519,13 @@ func (tc *TelegramClient) DownloadImagePack(ctx context.Context, url string) (*b
 	} else if packShortcodeRegex.MatchString(url) {
 		shortName = url
 	} else {
-		return nil, fmt.Errorf("invalid pack shortcode or link: %s", url)
+		return nil, bridgev2.RespError(mautrix.MNotFound.WithMessage("invalid pack shortcode or link: %s", url))
 	}
 	rawSet, err := tc.client.API().MessagesGetStickerSet(ctx, &tg.MessagesGetStickerSetRequest{Stickerset: &tg.InputStickerSetShortName{ShortName: shortName}})
 	if err != nil {
+		if tgerr.Is(err, tg.ErrStickersetInvalid) {
+			return nil, bridgev2.WrapRespErr(err, mautrix.MNotFound).WithMessage(humanise.Error(err))
+		}
 		return nil, err
 	}
 	set, ok := rawSet.(*tg.MessagesStickerSet)
@@ -551,12 +556,17 @@ func (tc *TelegramClient) DownloadImagePack(ctx context.Context, url string) (*b
 		}
 	}
 	for i, rawDoc := range set.Documents {
-		// TODO use direct media
-		mxc, _, info, err := media.NewTransferer(tc.client.API()).
+		var mxc id.ContentURIString
+		var info *event.FileInfo
+		xfer := media.NewTransferer(tc.client.API()).
 			WithStickerConfig(tc.main.Config.AnimatedSticker).
 			WithForceWebmStickerConvert(set.Set.Emojis).
-			WithDocument(rawDoc, false).
-			Transfer(ctx, tc.main.Store, tc.main.Bridge.Bot)
+			WithDocument(rawDoc, false)
+		if tc.main.useDirectMedia {
+			mxc, info, err = xfer.StickerDirectDownloadURL(ctx, tc.main.Bridge, set.Set, tc.telegramUserID)
+		} else {
+			mxc, _, info, err = xfer.Transfer(ctx, tc.main.Store, tc.main.Bridge.Bot)
+		}
 		if err != nil {
 			zerolog.Ctx(ctx).Err(err).Msg("Failed to transfer image in pack")
 			return nil, fmt.Errorf("failed to transfer document %d: %w", rawDoc.GetID(), err)
