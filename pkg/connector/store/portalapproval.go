@@ -12,6 +12,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"sync"
 	"time"
 
 	"go.mau.fi/util/dbutil"
@@ -43,7 +44,8 @@ type PortalApproval struct {
 }
 
 type PortalApprovalQuery struct {
-	db *dbutil.Database
+	db             *dbutil.Database
+	approvalIDLock sync.Mutex
 }
 
 const (
@@ -124,6 +126,8 @@ func (q *PortalApprovalQuery) Upsert(ctx context.Context, item PortalApproval, o
 	if item.Status == "" {
 		item.Status = PortalApprovalPending
 	}
+	q.approvalIDLock.Lock()
+	defer q.approvalIDLock.Unlock()
 	if item.ApprovalID == 0 {
 		if err := q.db.QueryRow(ctx, getNextPortalApprovalIDQuery).Scan(&item.ApprovalID); err != nil {
 			return nil, err
