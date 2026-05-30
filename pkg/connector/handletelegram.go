@@ -663,7 +663,7 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, entities tg.
 
 func (tc *TelegramClient) migrateChat(ctx context.Context, oldPortalKey, newPortalKey networkid.PortalKey) error {
 	if tc.main.Config.AlwaysTombstoneOnSupergroupMigration {
-		newPortal, err := tc.main.Bridge.GetPortalByKey(ctx, newPortalKey)
+		newPortal, err := tc.getPortalByKeyWithPolicy(ctx, newPortalKey, createReasonServiceMessage, true)
 		if err != nil {
 			return fmt.Errorf("failed to get new portal for chat migration: %w", err)
 		}
@@ -859,9 +859,9 @@ func (tc *TelegramClient) updateGhost(ctx context.Context, userID int64, user *t
 	var ghost *bridgev2.Ghost
 	var err error
 	if createIfMissing {
-		ghost, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(userID))
+		ghost, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeUserID(userID), createReasonResolveIdentifier, true)
 	} else {
-		ghost, err = tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeUserID(userID))
+		ghost, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeUserID(userID), createReasonBackgroundProfile, false)
 		if err == nil && ghost == nil {
 			return nil, nil
 		}
@@ -890,9 +890,9 @@ func (tc *TelegramClient) updateChannel(ctx context.Context, channel *tg.Channel
 	}
 	var ghost *bridgev2.Ghost
 	if createIfMissing {
-		ghost, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeChannelUserID(channel.ID))
+		ghost, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeChannelUserID(channel.ID), createReasonUpdateChannel, true)
 	} else {
-		ghost, err = tc.main.Bridge.GetExistingGhostByID(ctx, ids.MakeChannelUserID(channel.ID))
+		ghost, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeChannelUserID(channel.ID), createReasonBackgroundProfile, false)
 		if err == nil && ghost == nil {
 			return nil, nil
 		}
@@ -1354,7 +1354,7 @@ func (tc *TelegramClient) getAvailableReactions(ctx context.Context) (map[string
 
 			log.Debug().Msg("Fetched new available reactions")
 
-			myGhost, err := tc.main.Bridge.GetGhostByID(ctx, tc.userID)
+			myGhost, err := tc.getGhostByIDWithPolicy(ctx, tc.userID, createReasonAvailableReactions, true)
 			if err != nil {
 				log.Err(err).Msg("failed to get own ghost")
 			}
@@ -1594,9 +1594,11 @@ func (tc *TelegramClient) onPeerBlocked(ctx context.Context, e tg.Entities, upda
 	}
 
 	// Update the ghost
-	ghost, err := tc.main.Bridge.GetGhostByID(ctx, userID)
+	ghost, err := tc.getGhostByIDWithPolicy(ctx, userID, createReasonBackgroundProfile, false)
 	if err != nil {
 		return err
+	} else if ghost == nil {
+		return nil
 	}
 
 	// Find portals that are DMs with the user
@@ -1643,10 +1645,21 @@ func (tc *TelegramClient) onPhoneCall(ctx context.Context, e tg.Entities, update
 		callType = event.BeeperActionMessageCallTypeVoice
 		body.WriteString("call")
 	}
+	portalKey := tc.makePortalKeyFromID(ids.PeerTypeUser, call.AdminID, 0)
+	ok, err := tc.ensurePortalApproved(ctx, portalKey, portalApprovalInfo{
+		PeerType: string(ids.PeerTypeUser),
+		EntityID: call.AdminID,
+		Title:    fmt.Sprintf("user:%d", call.AdminID),
+	}, createReasonPhoneCall)
+	if err != nil {
+		return err
+	} else if !ok {
+		return nil
+	}
 	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Message[any]{
 		EventMeta: simplevent.EventMeta{
 			Type:         bridgev2.RemoteEventMessage,
-			PortalKey:    tc.makePortalKeyFromID(ids.PeerTypeUser, call.AdminID, 0),
+			PortalKey:    portalKey,
 			CreatePortal: true,
 			Sender:       tc.senderForUserID(call.AdminID),
 			LogContext: func(c zerolog.Context) zerolog.Context {

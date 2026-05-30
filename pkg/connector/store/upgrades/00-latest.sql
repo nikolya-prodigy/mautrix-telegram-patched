@@ -64,7 +64,13 @@ CREATE TABLE telegram_topic (
     PRIMARY KEY (channel_id, topic_id)
 );
 
+-- only: postgres
+CREATE SEQUENCE telegram_portal_approval_id_seq;
+
 CREATE TABLE telegram_portal_approval (
+-- only: postgres
+    approval_id     BIGINT NOT NULL DEFAULT nextval('telegram_portal_approval_id_seq') PRIMARY KEY,
+-- only: sqlite
     approval_id     BIGINT NOT NULL PRIMARY KEY,
     user_id         BIGINT NOT NULL,
     portal_id       TEXT   NOT NULL,
@@ -81,5 +87,8 @@ CREATE TABLE telegram_portal_approval (
 
     UNIQUE (user_id, portal_id, portal_receiver)
 );
+
+-- only: postgres
+ALTER SEQUENCE telegram_portal_approval_id_seq OWNED BY telegram_portal_approval.approval_id;
 
 CREATE INDEX telegram_portal_approval_user_status_idx ON telegram_portal_approval (user_id, status, approval_id);

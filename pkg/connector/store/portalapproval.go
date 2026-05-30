@@ -64,11 +64,40 @@ const (
 			last_event=excluded.last_event,
 			last_seen_ts=excluded.last_seen_ts
 	`
+	upsertPortalApprovalWithDefaultIDQuery = `
+		INSERT INTO telegram_portal_approval (
+			user_id, portal_id, portal_receiver, peer_type, entity_id, topic_id,
+			title, username, status, last_event, created_ts, last_seen_ts
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (user_id, portal_id, portal_receiver) DO UPDATE SET
+			peer_type=excluded.peer_type,
+			entity_id=excluded.entity_id,
+			topic_id=excluded.topic_id,
+			title=excluded.title,
+			username=excluded.username,
+			last_event=excluded.last_event,
+			last_seen_ts=excluded.last_seen_ts
+	`
 	upsertPortalApprovalWithStatusQuery = `
 		INSERT INTO telegram_portal_approval (
 			approval_id, user_id, portal_id, portal_receiver, peer_type, entity_id, topic_id,
 			title, username, status, last_event, created_ts, last_seen_ts
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT (user_id, portal_id, portal_receiver) DO UPDATE SET
+			peer_type=excluded.peer_type,
+			entity_id=excluded.entity_id,
+			topic_id=excluded.topic_id,
+			title=excluded.title,
+			username=excluded.username,
+			status=excluded.status,
+			last_event=excluded.last_event,
+			last_seen_ts=excluded.last_seen_ts
+	`
+	upsertPortalApprovalWithDefaultIDAndStatusQuery = `
+		INSERT INTO telegram_portal_approval (
+			user_id, portal_id, portal_receiver, peer_type, entity_id, topic_id,
+			title, username, status, last_event, created_ts, last_seen_ts
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (user_id, portal_id, portal_receiver) DO UPDATE SET
 			peer_type=excluded.peer_type,
 			entity_id=excluded.entity_id,
@@ -126,13 +155,35 @@ func (q *PortalApprovalQuery) Upsert(ctx context.Context, item PortalApproval, o
 	if item.Status == "" {
 		item.Status = PortalApprovalPending
 	}
-	q.approvalIDLock.Lock()
-	defer q.approvalIDLock.Unlock()
-	if item.ApprovalID == 0 {
+	if item.ApprovalID == 0 && q.db.Dialect != dbutil.Postgres {
+		q.approvalIDLock.Lock()
+		defer q.approvalIDLock.Unlock()
 		if err := q.db.QueryRow(ctx, getNextPortalApprovalIDQuery).Scan(&item.ApprovalID); err != nil {
 			return nil, err
 		}
 	}
+	err := q.execUpsert(ctx, item, overwriteStatus)
+	if err != nil {
+		return nil, err
+	}
+	return q.GetByPortal(ctx, item.UserID, item.PortalID, item.PortalReceiver)
+}
+
+func (q *PortalApprovalQuery) execUpsert(ctx context.Context, item PortalApproval, overwriteStatus bool) error {
+	if item.ApprovalID == 0 {
+		query := upsertPortalApprovalWithDefaultIDQuery
+		if overwriteStatus {
+			query = upsertPortalApprovalWithDefaultIDAndStatusQuery
+		}
+		_, err := q.db.Exec(
+			ctx, query,
+			item.UserID, item.PortalID, item.PortalReceiver, item.PeerType,
+			item.EntityID, item.TopicID, item.Title, item.Username, item.Status,
+			item.LastEvent, item.CreatedTS, item.LastSeenTS,
+		)
+		return err
+	}
+
 	query := upsertPortalApprovalQuery
 	if overwriteStatus {
 		query = upsertPortalApprovalWithStatusQuery
@@ -143,10 +194,7 @@ func (q *PortalApprovalQuery) Upsert(ctx context.Context, item PortalApproval, o
 		item.EntityID, item.TopicID, item.Title, item.Username, item.Status,
 		item.LastEvent, item.CreatedTS, item.LastSeenTS,
 	)
-	if err != nil {
-		return nil, err
-	}
-	return q.GetByPortal(ctx, item.UserID, item.PortalID, item.PortalReceiver)
+	return err
 }
 
 func (q *PortalApprovalQuery) GetByPortal(ctx context.Context, userID int64, portalID networkid.PortalID, receiver networkid.UserLoginID) (*PortalApproval, error) {

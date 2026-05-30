@@ -412,6 +412,11 @@ func fnApprovalSetStatus(status store.PortalApprovalStatus, createPortal, cleanu
 		}
 		if createPortal {
 			portalKey := networkid.PortalKey{ID: item.PortalID, Receiver: item.PortalReceiver}
+			if _, err = client.getPortalByKeyWithPolicy(ce.Ctx, portalKey, createReasonApprovalCommand, true); err != nil {
+				ce.Log.Err(err).Int64("approval_id", approvalID).Msg("Failed to prepare approved Telegram portal")
+				ce.Reply("Approved %s, but failed to prepare the Matrix room: %v", approvalDisplayName(*item), err)
+				return
+			}
 			res := client.main.Bridge.QueueRemoteEvent(client.userLogin, &simplevent.ChatResync{
 				EventMeta: simplevent.EventMeta{
 					Type:         bridgev2.RemoteEventChatResync,

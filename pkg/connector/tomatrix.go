@@ -163,14 +163,15 @@ func (tc *TelegramClient) convertToMatrix(
 			sender = ptr.Ptr(tc.getPeerSender(fromID).Sender)
 		}
 		if sender != nil {
-			ghost, err := portal.Bridge.GetGhostByID(ctx, *sender)
+			ghost, err := tc.getGhostByIDWithPolicy(ctx, *sender, createReasonMessageConversion, false)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get ghost for per message profile: %w", err)
-			}
-			perMessageProfile = &event.BeeperPerMessageProfile{
-				ID:          string(ghost.ID),
-				Displayname: ghost.Name,
-				AvatarURL:   &ghost.AvatarMXC,
+			} else if ghost != nil {
+				perMessageProfile = &event.BeeperPerMessageProfile{
+					ID:          string(ghost.ID),
+					Displayname: ghost.Name,
+					AvatarURL:   &ghost.AvatarMXC,
+				}
 			}
 		}
 	}

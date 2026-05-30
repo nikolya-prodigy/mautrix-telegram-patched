@@ -205,11 +205,11 @@ func (tc *TelegramClient) getReactionLimit(ctx context.Context, sender networkid
 		return 0, err
 	}
 
-	ghost, err := tc.main.Bridge.GetGhostByID(ctx, sender)
+	ghost, err := tc.getGhostByIDWithPolicy(ctx, sender, createReasonMessageConversion, false)
 	if err != nil {
 		return 0, err
 	}
-	if ghost.Metadata.(*GhostMetadata).IsPremium {
+	if ghost != nil && ghost.Metadata.(*GhostMetadata).IsPremium {
 		if maxReactions, ok := config["reactions_user_max_premium"].(float64); ok {
 			return int(maxReactions), nil
 		} else {

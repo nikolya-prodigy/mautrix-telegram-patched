@@ -437,7 +437,7 @@ func (tc *TelegramClient) getMaxMessageLength(ctx context.Context, isMedia bool)
 	if err != nil {
 		return 1024
 	}
-	myGhost, err := tc.main.Bridge.GetGhostByID(ctx, tc.userID)
+	myGhost, err := tc.getGhostByIDWithPolicy(ctx, tc.userID, createReasonMatrixAction, true)
 	if err != nil {
 		return 1024
 	}

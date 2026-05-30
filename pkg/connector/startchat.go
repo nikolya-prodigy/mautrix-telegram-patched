@@ -45,7 +45,7 @@ var (
 
 func (tc *TelegramClient) resolveUser(ctx context.Context, user tg.UserClass) (*bridgev2.ResolveIdentifierResponse, error) {
 	networkUserID := ids.MakeUserID(user.GetID())
-	if ghost, err := tc.main.Bridge.GetGhostByID(ctx, networkUserID); err != nil {
+	if ghost, err := tc.getGhostByIDWithPolicy(ctx, networkUserID, createReasonResolveIdentifier, true); err != nil {
 		return nil, fmt.Errorf("failed to get ghost: %w", err)
 	} else if userInfo, err := tc.wrapUserInfo(ctx, user, ghost); err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
@@ -89,7 +89,7 @@ func (tc *TelegramClient) resolveUserID(ctx context.Context, userID int64) (resp
 			PortalKey: tc.makePortalKeyFromID(ids.PeerTypeUser, userID, 0),
 		},
 	}
-	resp.Ghost, err = tc.main.Bridge.GetExistingGhostByID(ctx, networkUserID)
+	resp.Ghost, err = tc.getGhostByIDWithPolicy(ctx, networkUserID, createReasonResolveIdentifier, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ghost: %w", err)
 	} else if resp.Ghost == nil || resp.Ghost.Name == "" {
@@ -102,7 +102,7 @@ func (tc *TelegramClient) resolveUserID(ctx context.Context, userID int64) (resp
 			return nil, fmt.Errorf("failed to update ghost: %w", err)
 		} else {
 			if resp.Ghost == nil {
-				resp.Ghost, _ = tc.main.Bridge.GetExistingGhostByID(ctx, networkUserID)
+				resp.Ghost, _ = tc.getGhostByIDWithPolicy(ctx, networkUserID, createReasonResolveIdentifier, false)
 			}
 			return tc.makeResolveIdentifierResponse(resp.Ghost, user, userInfo), nil
 		}
@@ -321,7 +321,7 @@ func (tc *TelegramClient) CreateGroup(ctx context.Context, params *bridgev2.Grou
 	} else {
 		portalKey := tc.makePortalKeyFromID(ids.PeerTypeChat, chat.ID, 0)
 		if params.RoomID != "" {
-			portal, err := tc.main.Bridge.GetPortalByKey(ctx, portalKey)
+			portal, err := tc.getPortalByKeyWithPolicy(ctx, portalKey, createReasonMatrixAction, true)
 			if err != nil {
 				return nil, err
 			}

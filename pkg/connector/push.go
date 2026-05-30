@@ -282,23 +282,23 @@ func (tc *TelegramClient) ConnectBackground(ctx context.Context, params *bridgev
 		}
 		var err error
 		if data.Custom.ChannelID != 0 {
-			relatedPortal, err = tc.main.Bridge.GetPortalByKey(ctx, tc.makePortalKeyFromID(ids.PeerTypeChannel, data.Custom.ChannelID, data.Custom.TopicID))
+			relatedPortal, err = tc.getPortalByKeyWithPolicy(ctx, tc.makePortalKeyFromID(ids.PeerTypeChannel, data.Custom.ChannelID, data.Custom.TopicID), createReasonPushNotification, false)
 		} else if data.Custom.ChatID != 0 {
-			relatedPortal, err = tc.main.Bridge.GetPortalByKey(ctx, tc.makePortalKeyFromID(ids.PeerTypeChat, data.Custom.ChatID, 0))
+			relatedPortal, err = tc.getPortalByKeyWithPolicy(ctx, tc.makePortalKeyFromID(ids.PeerTypeChat, data.Custom.ChatID, 0), createReasonPushNotification, false)
 		} else if data.Custom.FromID != 0 {
-			relatedPortal, err = tc.main.Bridge.GetPortalByKey(ctx, tc.makePortalKeyFromID(ids.PeerTypeUser, data.Custom.FromID, 0))
+			relatedPortal, err = tc.getPortalByKeyWithPolicy(ctx, tc.makePortalKeyFromID(ids.PeerTypeUser, data.Custom.FromID, 0), createReasonPushNotification, false)
 		}
 		if err != nil {
 			return fmt.Errorf("failed to get related portal: %w", err)
 		}
 		if data.Custom.ChatFromBroadcastID != 0 {
-			sender, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeChannelUserID(data.Custom.FromID))
+			sender, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeChannelUserID(data.Custom.FromID), createReasonPushNotification, false)
 		} else if data.Custom.ChatFromGroupID != 0 {
-			sender, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeChannelUserID(data.Custom.ChatFromGroupID))
+			sender, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeChannelUserID(data.Custom.ChatFromGroupID), createReasonPushNotification, false)
 		} else if data.Custom.ChatFromID != 0 {
-			sender, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(data.Custom.ChatFromID))
+			sender, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeUserID(data.Custom.ChatFromID), createReasonPushNotification, false)
 		} else if data.Custom.FromID != 0 {
-			sender, err = tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(data.Custom.FromID))
+			sender, err = tc.getGhostByIDWithPolicy(ctx, ids.MakeUserID(data.Custom.FromID), createReasonPushNotification, false)
 		}
 		if err != nil {
 			return fmt.Errorf("failed to get sender: %w", err)

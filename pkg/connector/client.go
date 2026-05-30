@@ -238,9 +238,11 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 
 	client.telegramFmtParams = &telegramfmt.FormatParams{
 		GetUserInfoByID: func(ctx context.Context, id int64) (telegramfmt.UserInfo, error) {
-			ghost, err := tc.Bridge.GetGhostByID(ctx, ids.MakeUserID(id))
+			ghost, err := client.getGhostByIDWithPolicy(ctx, ids.MakeUserID(id), createReasonMessageConversion, false)
 			if err != nil {
 				return telegramfmt.UserInfo{}, err
+			} else if ghost == nil {
+				return telegramfmt.UserInfo{}, fmt.Errorf("ghost %d not found", id)
 			}
 			userInfo := telegramfmt.UserInfo{MXID: ghost.Intent.GetMXID(), Name: ghost.Name}
 			// FIXME this should look for user logins by ID, not hardcode the current user
@@ -256,8 +258,10 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 				return telegramfmt.UserInfo{}, err
 			} else if peerType != ids.PeerTypeUser {
 				return telegramfmt.UserInfo{}, fmt.Errorf("unexpected peer type: %s", peerType)
-			} else if ghost, err := tc.Bridge.GetGhostByID(ctx, ids.MakeUserID(userID)); err != nil {
+			} else if ghost, err := client.getGhostByIDWithPolicy(ctx, ids.MakeUserID(userID), createReasonMessageConversion, false); err != nil {
 				return telegramfmt.UserInfo{}, err
+			} else if ghost == nil {
+				return telegramfmt.UserInfo{}, fmt.Errorf("ghost %d not found", userID)
 			} else {
 				userInfo := telegramfmt.UserInfo{MXID: ghost.Intent.GetMXID(), Name: ghost.Name}
 				if ghost.ID == client.userID {
@@ -460,7 +464,7 @@ func (tc *TelegramClient) updateRemoteProfile(ctx context.Context, self *tg.User
 func (tc *TelegramClient) onConnected(self *tg.User) {
 	log := tc.userLogin.Log
 	ctx := log.WithContext(tc.main.Bridge.BackgroundCtx)
-	ghost, err := tc.main.Bridge.GetGhostByID(ctx, tc.userID)
+	ghost, err := tc.getGhostByIDWithPolicy(ctx, tc.userID, createReasonMatrixAction, true)
 	if err != nil {
 		log.Err(err).Msg("Failed to get own ghost")
 	} else if wrapped, err := tc.wrapUserInfo(ctx, self, ghost); err != nil {

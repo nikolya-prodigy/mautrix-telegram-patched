@@ -94,7 +94,7 @@ func adminRightsToPowerLevel(rights tg.ChatAdminRights) *int {
 }
 
 func (tc *TelegramClient) getDMChatInfo(ctx context.Context, userID int64) (*bridgev2.ChatInfo, error) {
-	ghost, err := tc.main.Bridge.GetGhostByID(ctx, ids.MakeUserID(userID))
+	ghost, err := tc.getGhostByIDWithPolicy(ctx, ids.MakeUserID(userID), createReasonChatInfo, true)
 	if err != nil {
 		return nil, err
 	}

@@ -151,7 +151,7 @@ func (tc *TelegramClient) ensurePortalApproved(ctx context.Context, portalKey ne
 	} else if item != nil {
 		return false, nil
 	}
-	portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, portalKey)
+	portal, err := tc.getPortalByKeyWithPolicy(ctx, portalKey, lastEvent, false)
 	if err != nil {
 		return false, err
 	} else if portal != nil && portal.MXID != "" {

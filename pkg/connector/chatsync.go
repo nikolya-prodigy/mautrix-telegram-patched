@@ -253,7 +253,7 @@ func (tc *TelegramClient) handleDialogs(ctx context.Context, dialogList []tg.Dia
 				continue
 			}
 
-			portal, err = tc.main.Bridge.GetPortalByKey(ctx, portalKey)
+			portal, err = tc.getPortalByKeyWithPolicy(ctx, portalKey, createReasonDialogSync, true)
 			if err != nil {
 				return err
 			}
