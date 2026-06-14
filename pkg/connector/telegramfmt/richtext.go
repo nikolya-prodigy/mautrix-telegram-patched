@@ -158,13 +158,13 @@ func (r *rtParser) parseItem(ctx context.Context, text tg.RichTextClass) {
 			r.parseItem(ctx, text)
 		}
 	case *tg.TextMentionName:
-		ghost, err := r.Bridge.GetGhostByID(ctx, ids.MakeUserID(v.UserID))
+		userInfo, err := r.GetUserInfoByID(ctx, v.UserID)
 		if err != nil {
-			zerolog.Ctx(ctx).Err(err).Msg("Failed to get ghost for mention")
+			zerolog.Ctx(ctx).Err(err).Int64("user_id", v.UserID).Msg("Failed to get user info for mention")
 			r.parseItem(ctx, v.Text)
 		} else {
-			r.mentions.Add(ghost.Intent.GetMXID())
-			r.writeWrappedItem(ctx, "a", v.Text, html.Attribute{Key: "href", Val: ghost.Intent.GetMXID().URI().MatrixToURL()})
+			r.mentions.Add(userInfo.MXID)
+			r.writeWrappedItem(ctx, "a", v.Text, html.Attribute{Key: "href", Val: userInfo.MXID.URI().MatrixToURL()})
 		}
 	case *tg.TextDate:
 		r.writeWrappedItem(ctx, "time", v.Text, html.Attribute{Key: "datetime", Val: time.Unix(int64(v.Date), 0).Format(time.RFC3339)})
@@ -430,11 +430,13 @@ func (r *rtParser) writeRichTextChannel(ctx context.Context, v tg.ChatClass) {
 		r.printf("Unsupported channel type: <code>%T</code>", v)
 		return
 	}
-	portal, err := r.Bridge.GetPortalByKey(ctx, portalKey)
-	if err != nil {
-		zerolog.Ctx(ctx).Err(err).Msg("Failed to get portal for channel mention")
-	} else if portal != nil {
-		url = portal.MXID.URI(r.Bridge.Matrix.ServerName()).MatrixToURL()
+	if r.GetPortalURLByKey != nil {
+		portalURL, err := r.GetPortalURLByKey(ctx, portalKey)
+		if err != nil {
+			zerolog.Ctx(ctx).Err(err).Msg("Failed to get portal URL for channel mention")
+		} else if portalURL != "" {
+			url = portalURL
+		}
 	}
 	r.printf(`<a href="%s">%s</a>`, url, html.EscapeString(name))
 }

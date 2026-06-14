@@ -42,6 +42,7 @@ type FormatParams struct {
 	CustomEmojis          map[networkid.EmojiID]emojis.EmojiInfo
 	GetUserInfoByUsername func(ctx context.Context, username string) (UserInfo, error)
 	GetUserInfoByID       func(ctx context.Context, id int64) (UserInfo, error)
+	GetPortalURLByKey     func(ctx context.Context, portalKey networkid.PortalKey) (string, error)
 	NormalizeURL          func(ctx context.Context, url string) string
 	MakePortalKeyFromID   func(peerType ids.PeerType, chatID int64, topicID int) networkid.PortalKey
 }
@@ -52,6 +53,7 @@ func (fp FormatParams) WithCustomEmojis(emojis map[networkid.EmojiID]emojis.Emoj
 		CustomEmojis:          emojis,
 		GetUserInfoByUsername: fp.GetUserInfoByUsername,
 		GetUserInfoByID:       fp.GetUserInfoByID,
+		GetPortalURLByKey:     fp.GetPortalURLByKey,
 		NormalizeURL:          fp.NormalizeURL,
 		MakePortalKeyFromID:   fp.MakePortalKeyFromID,
 	}

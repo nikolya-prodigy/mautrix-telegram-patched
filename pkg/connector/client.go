@@ -274,6 +274,15 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 				return userInfo, nil
 			}
 		},
+		GetPortalURLByKey: func(ctx context.Context, portalKey networkid.PortalKey) (string, error) {
+			portal, err := client.getPortalByKeyWithPolicy(ctx, portalKey, createReasonMessageConversion, false)
+			if err != nil {
+				return "", err
+			} else if portal == nil || portal.MXID == "" {
+				return "", nil
+			}
+			return portal.MXID.URI(tc.Bridge.Matrix.ServerName()).MatrixToURL(), nil
+		},
 		NormalizeURL: func(ctx context.Context, url string) string {
 			log := zerolog.Ctx(ctx).With().
 				Str("conversion_direction", "to_matrix").
