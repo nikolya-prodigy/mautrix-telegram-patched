@@ -237,6 +237,8 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 	})
 
 	client.telegramFmtParams = &telegramfmt.FormatParams{
+		Bridge:              tc.Bridge,
+		MakePortalKeyFromID: client.makePortalKeyFromID,
 		GetUserInfoByID: func(ctx context.Context, id int64) (telegramfmt.UserInfo, error) {
 			ghost, err := client.getGhostByIDWithPolicy(ctx, ids.MakeUserID(id), createReasonMessageConversion, false)
 			if err != nil {

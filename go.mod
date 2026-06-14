@@ -16,7 +16,6 @@ require (
 	github.com/go-faster/jx v1.2.0
 	github.com/go-faster/xor v1.0.0
 	github.com/go-openapi/inflect v0.21.5
-	github.com/gorilla/websocket v1.5.0
 	github.com/gotd/getdoc v0.51.0
 	github.com/gotd/ige v0.2.2
 	github.com/gotd/neo v0.1.5
@@ -27,7 +26,7 @@ require (
 	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.19.0
-	go.mau.fi/util v0.9.9
+	go.mau.fi/util v0.9.10-0.20260611184148-37d12232dae7
 	go.mau.fi/webp v0.2.0
 	go.mau.fi/zerozap v0.1.2
 	go.opentelemetry.io/otel v1.43.0
@@ -40,7 +39,6 @@ require (
 	golang.org/x/image v0.40.0
 	golang.org/x/net v0.54.0
 	golang.org/x/sync v0.20.0
-	golang.org/x/tools v0.45.0
 	gopkg.in/yaml.v3 v3.0.1
 	maunium.net/go/mautrix v0.28.1-0.20260603101516-494ed037fd4e
 	rsc.io/qr v0.2.0
@@ -75,6 +73,7 @@ require (
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/tools v0.45.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	maunium.net/go/mauflag v1.0.0 // indirect
