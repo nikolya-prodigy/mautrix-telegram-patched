@@ -144,10 +144,11 @@ func (r *rtParser) parseItem(ctx context.Context, text tg.RichTextClass) {
 	case *tg.TextMention:
 		plain, ok := v.Text.(*tg.TextPlain)
 		if ok {
+			username := strings.TrimPrefix(plain.Text, "@")
 			// TODO support channel links (link to room if exists)
-			userInfo, err := r.GetUserInfoByUsername(ctx, plain.Text)
+			userInfo, err := r.GetUserInfoByUsername(ctx, username)
 			if err != nil {
-				zerolog.Ctx(ctx).Debug().Err(err).Str("username", plain.Text).Msg("Failed to get user info for mention")
+				zerolog.Ctx(ctx).Debug().Err(err).Str("username", username).Msg("Failed to get user info for rich text mention")
 				ok = false
 			} else {
 				r.mentions.Add(userInfo.MXID)
@@ -155,7 +156,7 @@ func (r *rtParser) parseItem(ctx context.Context, text tg.RichTextClass) {
 			}
 		}
 		if !ok {
-			r.parseItem(ctx, text)
+			r.parseItem(ctx, v.Text)
 		}
 	case *tg.TextMentionName:
 		userInfo, err := r.GetUserInfoByID(ctx, v.UserID)
@@ -227,7 +228,9 @@ func (r *rtParser) parseBlock(ctx context.Context, block tg.PageBlockClass) {
 		r.writeWrappedItem(ctx, "code", v.Text, attrs...)
 		r.buf.WriteString("</pre>")
 	case *tg.PageBlockFooter:
-		r.writeWrappedItem(ctx, "footer", v.Text)
+		r.buf.WriteString("<footer>")
+		r.writeWrappedItem(ctx, "p", v.Text)
+		r.buf.WriteString("</footer>")
 	case *tg.PageBlockDivider:
 		r.buf.WriteString("<hr/>")
 	case *tg.PageBlockAnchor:
