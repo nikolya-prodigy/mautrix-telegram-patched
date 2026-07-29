@@ -355,11 +355,13 @@ func (tc *TelegramClient) addForwardHeader(ctx context.Context, part *bridgev2.C
 			mxid = ghost.Intent.GetMXID()
 			fwdFromText = cmp.Or(ghost.Name, fwd.FromName, "unknown user")
 		}
-		fwdFromHTML = fmt.Sprintf(
-			`<a href="%s">%s</a>`,
-			mxid.URI().MatrixToURL(),
-			html.EscapeString(fwdFromText),
-		)
+		if mxid != "" {
+			fwdFromHTML = fmt.Sprintf(
+				`<a href="%s">%s</a>`,
+				mxid.URI().MatrixToURL(),
+				html.EscapeString(fwdFromText),
+			)
+		}
 	case *tg.PeerChannel, *tg.PeerChat:
 		unknownType := "unknown chat"
 		var channelID int64
