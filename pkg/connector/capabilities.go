@@ -25,6 +25,7 @@ import (
 	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
 	"go.mau.fi/util/variationselector"
+
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/event"
 
@@ -33,7 +34,8 @@ import (
 
 func (tc *TelegramConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilities {
 	return &bridgev2.NetworkGeneralCapabilities{
-		DisappearingMessages: true,
+		DisappearingMessages:     true,
+		NetworkIsImmediateParent: true,
 		Provisioning: bridgev2.ProvisioningCapabilities{
 			ImagePackImport: true,
 			ResolveIdentifier: bridgev2.ResolveIdentifierCapabilities{

@@ -17,7 +17,10 @@ import (
 	"strings"
 	"testing"
 
+	"maunium.net/go/mautrix/bridgev2/networkid"
+
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
+	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
 )
 
 func TestMatrixCreationCallsGoThroughPolicy(t *testing.T) {
@@ -127,5 +130,19 @@ func TestPortalApprovalAutoCreateMatrix(t *testing.T) {
 				t.Fatalf("portalApprovalAutoAllowed() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestPortalApprovalInfoFromCommunity(t *testing.T) {
+	client := &TelegramClient{}
+	portalKey := networkid.PortalKey{ID: ids.MakePortalID(ids.PeerTypeChannel, 42)}
+	info := client.portalApprovalInfoFromObject(portalKey, &tg.Community{ID: 42, Title: "Test community"})
+
+	if info.PeerType != string(ids.PeerTypeChannel) {
+		t.Fatalf("community peer type = %q, want %q", info.PeerType, ids.PeerTypeChannel)
+	} else if info.EntityID != 42 {
+		t.Fatalf("community entity ID = %d, want 42", info.EntityID)
+	} else if info.Title != "Test community" {
+		t.Fatalf("community title = %q, want %q", info.Title, "Test community")
 	}
 }

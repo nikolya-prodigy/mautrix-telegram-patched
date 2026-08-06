@@ -86,6 +86,8 @@ func (tc *TelegramClient) portalApprovalInfoFromObject(portalKey networkid.Porta
 		}
 		info.Title = chat.Title
 		info.Username = chat.Username
+	case *tg.Community:
+		info.Title = chat.Title
 	}
 	return info
 }
