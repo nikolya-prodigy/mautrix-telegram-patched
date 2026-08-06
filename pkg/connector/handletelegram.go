@@ -1030,9 +1030,9 @@ func (tc *TelegramClient) onUpdate(ctx context.Context, e tg.Entities, upd tg.Up
 	case *tg.UpdateReadHistoryOutbox:
 		return tc.updateReadReceipt(ctx, e, update)
 	case *tg.UpdateReadHistoryInbox:
-		return tc.onOwnReadReceipt(tc.makePortalKeyFromPeer(update.Peer, update.TopMsgID), update.MaxID)
+		return tc.onOwnReadReceipt(ctx, tc.makePortalKeyFromPeer(update.Peer, update.TopMsgID), update.MaxID)
 	case *tg.UpdateReadChannelInbox:
-		return tc.onOwnReadReceipt(tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, 0), update.MaxID)
+		return tc.onOwnReadReceipt(ctx, tc.makePortalKeyFromID(ids.PeerTypeChannel, update.ChannelID, 0), update.MaxID)
 	case *tg.UpdateNotifySettings:
 		return tc.onNotifySettings(ctx, e, update)
 	case *tg.UpdatePinnedDialogs:
@@ -1281,19 +1281,14 @@ func (tc *TelegramClient) updateReadReceipt(ctx context.Context, e tg.Entities, 
 	return resultToError(res)
 }
 
-func (tc *TelegramClient) onOwnReadReceipt(portalKey networkid.PortalKey, maxID int) error {
-	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Receipt{
-		EventMeta: simplevent.EventMeta{
-			Type:      bridgev2.RemoteEventReadReceipt,
-			PortalKey: portalKey,
-			Sender:    tc.mySender(),
-			LogContext: func(c zerolog.Context) zerolog.Context {
-				return c.Str("tg_event", "updateRead*Inbox")
-			},
-		},
-		LastTarget:          ids.MakeMessageID(portalKey, maxID),
-		ReadUpToStreamOrder: int64(maxID),
+func (tc *TelegramClient) onOwnReadReceipt(ctx context.Context, portalKey networkid.PortalKey, maxID int) error {
+	receipt, err := tc.makeOwnReadReceipt(ctx, portalKey, maxID, func(c zerolog.Context) zerolog.Context {
+		return c.Str("tg_event", "updateRead*Inbox")
 	})
+	if err != nil || receipt == nil {
+		return err
+	}
+	res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, receipt)
 	return resultToError(res)
 }
 

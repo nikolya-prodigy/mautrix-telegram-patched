@@ -397,17 +397,16 @@ func (tc *TelegramClient) syncNormalDialog(
 	}
 
 	// Generate a read receipt from the last known read message id
-	res = tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Receipt{
-		EventMeta: simplevent.EventMeta{
-			Type:      bridgev2.RemoteEventReadReceipt,
-			PortalKey: portalKey,
-			Sender:    tc.mySender(),
-		},
-		LastTarget:          ids.MakeMessageID(portalKey, dialog.ReadInboxMaxID),
-		ReadUpToStreamOrder: int64(dialog.ReadInboxMaxID),
+	receipt, err := tc.makeOwnReadReceipt(ctx, portalKey, dialog.ReadInboxMaxID, func(c zerolog.Context) zerolog.Context {
+		return c.Str("update", "sync")
 	})
-	if err = resultToError(res); err != nil {
+	if err != nil {
 		return err
+	} else if receipt != nil {
+		res = tc.main.Bridge.QueueRemoteEvent(tc.userLogin, receipt)
+		if err = resultToError(res); err != nil {
+			return err
+		}
 	}
 	return nil
 }
