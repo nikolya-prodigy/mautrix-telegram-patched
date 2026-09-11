@@ -55,9 +55,12 @@ import (
 )
 
 var (
-	ErrNoAuthKey        = errors.New("user does not have auth key")
-	ErrFailToQueueEvent = errors.New("failed to queue event")
+	ErrNoAuthKey               = errors.New("user does not have auth key")
+	ErrFailToQueueEvent        = errors.New("failed to queue event")
+	errTelegramConnectionStuck = errors.New("telegram connection did not recover")
 )
+
+const deadConnectionEscalationDelay = time.Minute
 
 func resultToError(res bridgev2.EventHandlingResult) error {
 	if !res.Success {
@@ -85,6 +88,7 @@ type TelegramClient struct {
 	clientDone        *exsync.Event
 	clientInitialized *exsync.Event
 	mu                sync.Mutex
+	connectionState   atomic.Uint64
 
 	appConfigLock sync.Mutex
 	appConfig     map[string]any
@@ -384,10 +388,37 @@ func (tc *TelegramClient) onDead() {
 			Msg("client is dead, not sending transient disconnect, because already in an error state")
 		return
 	}
+	connectionState := tc.connectionState.Add(1)
+	tc.userLogin.Log.Warn().
+		Dur("escalate_after", deadConnectionEscalationDelay).
+		Msg("Telegram connection died, waiting for automatic reconnect")
 	tc.userLogin.BridgeState.Send(status.BridgeState{
 		StateEvent: status.StateTransientDisconnect,
 		Message:    "Telegram client disconnected",
 	})
+	go tc.escalateDeadConnection(connectionState)
+}
+
+func (tc *TelegramClient) escalateDeadConnection(connectionState uint64) {
+	timer := time.NewTimer(deadConnectionEscalationDelay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-tc.main.Bridge.BackgroundCtx.Done():
+		return
+	}
+	if !tc.shouldEscalateDeadConnection(connectionState) {
+		return
+	}
+	tc.userLogin.Log.Error().
+		Err(errTelegramConnectionStuck).
+		Msg("Telegram connection is still dead, requesting client recreation")
+	tc.sendBadCredentialsOrUnknownError(errTelegramConnectionStuck)
+}
+
+func (tc *TelegramClient) shouldEscalateDeadConnection(connectionState uint64) bool {
+	return tc.connectionState.Load() == connectionState &&
+		tc.userLogin.BridgeState.GetPrev().StateEvent == status.StateTransientDisconnect
 }
 
 func (tc *TelegramClient) sendBadCredentialsOrUnknownError(err error) {
@@ -474,6 +505,7 @@ func (tc *TelegramClient) updateRemoteProfile(ctx context.Context, self *tg.User
 }
 
 func (tc *TelegramClient) onConnected(self *tg.User) {
+	tc.connectionState.Add(1)
 	log := tc.userLogin.Log
 	ctx := log.WithContext(tc.main.Bridge.BackgroundCtx)
 	ghost, err := tc.getGhostByIDWithPolicy(ctx, tc.userID, createReasonMatrixAction, true)
