@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/util/exmime"
 	"go.mau.fi/util/exsync"
 	"go.mau.fi/util/ffmpeg"
 	"go.mau.fi/util/jsontime"
@@ -83,24 +84,6 @@ var (
 )
 
 const telegramMediaUploadThreads = 4
-
-func getMediaFilename(content *event.MessageEventContent) (filename string) {
-	if content.FileName != "" {
-		filename = content.FileName
-	} else {
-		filename = content.Body
-	}
-	if filename == "" {
-		return "image.jpg" // Assume it's a JPEG image
-	}
-	if content.MsgType == event.MsgImage && (!strings.HasSuffix(filename, ".jpg") && !strings.HasSuffix(filename, ".jpeg") && !strings.HasSuffix(filename, ".png")) {
-		if content.Info != nil && content.Info.MimeType != "" {
-			return filename + "." + strings.TrimPrefix(content.Info.MimeType, "image/")
-		}
-		return filename + ".jpg" // Assume it's a JPEG
-	}
-	return filename
-}
 
 func (tc *TelegramClient) HandleMatrixViewingChat(ctx context.Context, msg *bridgev2.MatrixViewingChat) error {
 	if msg.Portal == nil {
@@ -246,7 +229,6 @@ func (tc *TelegramClient) pollSponsoredMessage(ctx context.Context, portal *brid
 
 func (tc *TelegramClient) transferMediaToTelegram(ctx context.Context, content *event.MessageEventContent, sticker, forceRetry, forceDocument bool) (tg.InputMediaClass, error) {
 	var upload tg.InputFileClass
-	filename := getMediaFilename(content)
 	info := content.GetInfo()
 	if sticker {
 		if origFile, err := tc.findOriginalStickerDocument(ctx, info.BridgedSticker, forceRetry); err != nil {
@@ -255,6 +237,7 @@ func (tc *TelegramClient) transferMediaToTelegram(ctx context.Context, content *
 			return origFile, nil
 		}
 	}
+	filename := content.GetFileName()
 	err := tc.main.Bridge.Bot.DownloadMediaToFile(ctx, content.URL, content.File, false, func(f *os.File) (err error) {
 		uploadFilename := f.Name()
 		if sticker && (info.MimeType == "image/png" || info.MimeType == "image/jpeg") {
@@ -283,7 +266,7 @@ func (tc *TelegramClient) transferMediaToTelegram(ctx context.Context, content *
 		} else if sticker && (info.MimeType != "video/webm" && info.MimeType != "application/x-tgsticker") {
 			uploadFilename, err = ffmpeg.ConvertPath(ctx, uploadFilename, ".webp", []string{}, []string{}, false)
 			if err != nil {
-				return fmt.Errorf("failed to convert sticker to webm: %w", err)
+				return fmt.Errorf("failed to convert sticker to webp: %w", err)
 			}
 			defer os.Remove(uploadFilename)
 			info.MimeType = "image/webp"
@@ -308,7 +291,7 @@ func (tc *TelegramClient) transferMediaToTelegram(ctx context.Context, content *
 				aspectRatio > 20 ||
 				cfg.Height+cfg.Width > 10000
 		}
-		if !forceDocument && !sticker && content.MsgType == event.MsgImage {
+		if !forceDocument && content.MsgType == event.MsgImage && content.Info.MimeType == "image/webp" {
 			_, err = f.Seek(0, io.SeekStart)
 			if err != nil {
 				return err
@@ -327,8 +310,16 @@ func (tc *TelegramClient) transferMediaToTelegram(ctx context.Context, content *
 				return fmt.Errorf("failed to encode non-sticker jpeg image: %w", err)
 			}
 			uploadFilename = tempFile.Name()
-			filename += ".jpeg"
+			filename += ".jpg"
 			info.MimeType = "image/jpeg"
+		}
+		if sticker {
+			filename = "sticker" + exmime.ExtensionFromMimetype(info.MimeType)
+		} else if !forceDocument && content.MsgType == event.MsgImage {
+			expectedExtension := exmime.ExtensionFromMimetype(content.Info.MimeType)
+			if !strings.HasSuffix(filename, expectedExtension) {
+				filename += expectedExtension
+			}
 		}
 
 		upload, err = uploader.NewUploader(tc.client.API()).
@@ -519,7 +510,7 @@ func (tc *TelegramClient) HandleMatrixMessage(ctx context.Context, msg *bridgev2
 			ReplyTo:  replyTo,
 			RandomID: randomID,
 		}
-		mediaReq.Media, err = tc.transferMediaToTelegram(ctx, msg.Content, true, false, false)
+		mediaReq.Media, err = tc.transferMediaToTelegram(ctx, msg.Content, true, false, true)
 		if err != nil {
 			return nil, err
 		}
