@@ -17,11 +17,15 @@
 package connector
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/status"
+
+	"go.mau.fi/mautrix-telegram/pkg/gotd/rpc"
 )
 
 func TestShouldEscalateDeadConnection(t *testing.T) {
@@ -40,4 +44,20 @@ func TestShouldEscalateDeadConnection(t *testing.T) {
 	connectionState = tc.connectionState.Load()
 	bridgeState.SetPrev(status.BridgeState{StateEvent: status.StateConnected})
 	require.False(t, tc.shouldEscalateDeadConnection(connectionState))
+}
+
+func TestShouldRecoverClosedEngine(t *testing.T) {
+	bridgeState := &bridgev2.BridgeStateQueue{}
+	tc := &TelegramClient{
+		userLogin: &bridgev2.UserLogin{BridgeState: bridgeState},
+	}
+
+	bridgeState.SetPrev(status.BridgeState{StateEvent: status.StateConnected})
+	require.False(t, tc.shouldRecoverClosedEngine(errors.New("temporary network error")))
+	require.True(t, tc.shouldRecoverClosedEngine(fmt.Errorf("get difference: %w", rpc.ErrEngineClosed)))
+	require.False(t, tc.shouldRecoverClosedEngine(rpc.ErrEngineClosed), "recovery must only be requested once")
+
+	tc.healthRecoveryRequested.Store(false)
+	bridgeState.SetPrev(status.BridgeState{StateEvent: status.StateTransientDisconnect})
+	require.False(t, tc.shouldRecoverClosedEngine(rpc.ErrEngineClosed), "normal reconnect handles transient disconnects")
 }

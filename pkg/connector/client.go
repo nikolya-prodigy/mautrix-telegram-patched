@@ -48,6 +48,7 @@ import (
 	"go.mau.fi/mautrix-telegram/pkg/connector/store"
 	"go.mau.fi/mautrix-telegram/pkg/connector/telegramfmt"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/pool"
+	"go.mau.fi/mautrix-telegram/pkg/gotd/rpc"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/telegram"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/telegram/auth"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/telegram/updates"
@@ -60,7 +61,11 @@ var (
 	errTelegramConnectionStuck = errors.New("telegram connection did not recover")
 )
 
-const deadConnectionEscalationDelay = time.Minute
+const (
+	deadConnectionEscalationDelay = time.Minute
+	connectionHealthCheckInterval = time.Minute
+	connectionHealthCheckTimeout  = 15 * time.Second
+)
 
 func resultToError(res bridgev2.EventHandlingResult) error {
 	if !res.Success {
@@ -73,22 +78,23 @@ func resultToError(res bridgev2.EventHandlingResult) error {
 }
 
 type TelegramClient struct {
-	main              *TelegramConnector
-	ScopedStore       *store.ScopedStore
-	telegramUserID    int64
-	loginID           networkid.UserLoginID
-	userID            networkid.UserID
-	userLogin         *bridgev2.UserLogin
-	metadata          *UserLoginMetadata
-	client            *telegram.Client
-	updatesManager    *updates.Manager
-	dispatcher        tg.UpdateDispatcher
-	clientCtx         context.Context
-	clientCancel      context.CancelFunc
-	clientDone        *exsync.Event
-	clientInitialized *exsync.Event
-	mu                sync.Mutex
-	connectionState   atomic.Uint64
+	main                    *TelegramConnector
+	ScopedStore             *store.ScopedStore
+	telegramUserID          int64
+	loginID                 networkid.UserLoginID
+	userID                  networkid.UserID
+	userLogin               *bridgev2.UserLogin
+	metadata                *UserLoginMetadata
+	client                  *telegram.Client
+	updatesManager          *updates.Manager
+	dispatcher              tg.UpdateDispatcher
+	clientCtx               context.Context
+	clientCancel            context.CancelFunc
+	clientDone              *exsync.Event
+	clientInitialized       *exsync.Event
+	mu                      sync.Mutex
+	connectionState         atomic.Uint64
+	healthRecoveryRequested atomic.Bool
 
 	appConfigLock sync.Mutex
 	appConfig     map[string]any
@@ -421,6 +427,39 @@ func (tc *TelegramClient) shouldEscalateDeadConnection(connectionState uint64) b
 		tc.userLogin.BridgeState.GetPrev().StateEvent == status.StateTransientDisconnect
 }
 
+func (tc *TelegramClient) watchConnectionHealth(ctx context.Context) {
+	ticker := time.NewTicker(connectionHealthCheckInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		checkCtx, cancel := context.WithTimeout(ctx, connectionHealthCheckTimeout)
+		_, err := tc.client.API().HelpGetNearestDC(checkCtx)
+		cancel()
+		if ctx.Err() != nil {
+			return
+		}
+		if !tc.shouldRecoverClosedEngine(err) {
+			continue
+		}
+
+		tc.userLogin.Log.Error().Err(err).
+			Msg("Telegram RPC engine is closed, requesting client recreation")
+		tc.sendBadCredentialsOrUnknownError(fmt.Errorf("%w: %w", errTelegramConnectionStuck, err))
+		return
+	}
+}
+
+func (tc *TelegramClient) shouldRecoverClosedEngine(err error) bool {
+	return errors.Is(err, rpc.ErrEngineClosed) &&
+		tc.userLogin.BridgeState.GetPrev().StateEvent == status.StateConnected &&
+		tc.healthRecoveryRequested.CompareAndSwap(false, true)
+}
+
 func (tc *TelegramClient) sendBadCredentialsOrUnknownError(err error) {
 	if auth.IsUnauthorized(err) || errors.Is(err, ErrNoAuthKey) {
 		tc.userLogin.BridgeState.Send(status.BridgeState{
@@ -506,6 +545,7 @@ func (tc *TelegramClient) updateRemoteProfile(ctx context.Context, self *tg.User
 
 func (tc *TelegramClient) onConnected(self *tg.User) {
 	tc.connectionState.Add(1)
+	tc.healthRecoveryRequested.Store(false)
 	log := tc.userLogin.Log
 	ctx := log.WithContext(tc.main.Bridge.BackgroundCtx)
 	ghost, err := tc.getGhostByIDWithPolicy(ctx, tc.userID, createReasonMatrixAction, true)
@@ -582,6 +622,7 @@ func (tc *TelegramClient) runInBackground(ctx context.Context) {
 			}()
 		}
 		log.Info().Msg("Client running, starting updates")
+		go tc.watchConnectionHealth(ctx)
 		err := tc.updatesManager.Run(ctx, tc.client.API(), tc.telegramUserID, updates.AuthOptions{
 			IsBot: tc.metadata.IsBot,
 		})
