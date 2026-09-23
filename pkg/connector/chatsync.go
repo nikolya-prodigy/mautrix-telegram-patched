@@ -328,7 +328,8 @@ func (tc *TelegramClient) syncNormalDialog(
 			// Need to get full chat info to get the member list
 			chatInfo, err = tc.GetChatInfo(ctx, portal)
 			if err != nil {
-				return fmt.Errorf("failed to get chat info for %s: %w", portalKey, err)
+				log.Warn().Err(err).Msg("Not syncing portal because chat info is unavailable")
+				return nil
 			}
 		case *tg.ChatForbidden:
 			log.Debug().

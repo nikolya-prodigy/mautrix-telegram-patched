@@ -58,6 +58,7 @@ import (
 var (
 	ErrNoAuthKey               = errors.New("user does not have auth key")
 	ErrFailToQueueEvent        = errors.New("failed to queue event")
+	ErrChatInfoUnavailable     = errors.New("failed to get chat info")
 	errTelegramConnectionStuck = errors.New("telegram connection did not recover")
 )
 
