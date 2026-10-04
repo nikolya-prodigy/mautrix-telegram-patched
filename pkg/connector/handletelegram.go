@@ -242,6 +242,7 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 			return nil
 		}
 		sender := tc.getEventSender(msg, isBroadcastChannel)
+		msgID := ids.GetMessageIDFromMessage(msg)
 		res := tc.main.Bridge.QueueRemoteEvent(tc.userLogin, &simplevent.Message[*tg.Message]{
 			EventMeta: simplevent.EventMeta{
 				Type: bridgev2.RemoteEventMessage,
@@ -259,10 +260,11 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 				Timestamp:    time.Unix(int64(msg.Date), 0),
 				StreamOrder:  int64(msg.GetID()),
 			},
-			ID:                 ids.GetMessageIDFromMessage(msg),
+			ID:                 msgID,
 			Data:               msg,
 			ConvertMessageFunc: tc.convertToMatrix,
 		})
+		tc.recentMessageRooms.Push(msgID, portalKey)
 
 		if err := resultToError(res); err != nil {
 			return err
@@ -274,7 +276,6 @@ func (tc *TelegramClient) onUpdateNewMessage(ctx context.Context, entities tg.En
 		return nil
 	case *tg.MessageService:
 		return tc.handleServiceMessage(ctx, entities, msg)
-
 	default:
 		log.Warn().
 			Type("action_type", msg).
@@ -318,6 +319,7 @@ func (tc *TelegramClient) handleServiceMessage(ctx context.Context, entities tg.
 	} else if !ok {
 		return nil
 	}
+	tc.recentMessageRooms.Push(ids.GetMessageIDFromMessage(msg), portalKey)
 	sender := tc.getEventSender(msg, false)
 
 	eventMeta := simplevent.EventMeta{
