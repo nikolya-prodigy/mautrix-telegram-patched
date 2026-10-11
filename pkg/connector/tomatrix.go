@@ -554,20 +554,35 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 	// FIXME don't use raw map for fields in the FileInfo struct
 	extraInfo := map[string]any{}
 
-	transferer := media.NewTransferer(tc.client.API()).WithRoomID(portal.MXID)
-	var mediaTransferer *media.ReadyTransferer
-
 	isWebPage := false
 	if unwrapped := unwrapWebPage(msgMedia); unwrapped != nil {
 		msgMedia = unwrapped
 		isWebPage = true
 	}
 
-	if t, ok := msgMedia.(ttlable); ok && !msg.Out {
+	if t, ok := msgMedia.(ttlable); ok {
 		if ttl, ok := t.GetTTLSeconds(); ok && ttl > 0 {
-			content.BeeperViewLimited = telegramViewLimit(ttl)
+			if ttl == telegramViewOnceTTL && tc.main.Config.DisableViewOnce {
+				typeName := "photo"
+				if msgMedia.TypeID() == tg.MessageMediaDocumentTypeID {
+					typeName = "file"
+				}
+				return &bridgev2.ConvertedMessagePart{
+					Type: event.EventMessage,
+					Content: &event.MessageEventContent{
+						MsgType: event.MsgNotice,
+						Body:    fmt.Sprintf("You received a view once %s. For added privacy, you can only open it on the Telegram app.", typeName),
+					},
+				}, nil
+			}
+			if !msg.Out {
+				content.BeeperViewLimited = telegramViewLimit(ttl)
+			}
 		}
 	}
+
+	transferer := media.NewTransferer(tc.client.API()).WithRoomID(portal.MXID)
+	var mediaTransferer *media.ReadyTransferer
 
 	// Determine the filename and some other information
 	switch msgMedia := msgMedia.(type) {
