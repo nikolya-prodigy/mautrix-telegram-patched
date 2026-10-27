@@ -576,7 +576,17 @@ func (tc *TelegramClient) convertMediaRequiringUpload(
 				}, nil
 			}
 			if !msg.Out {
-				content.BeeperViewLimited = telegramViewLimit(ttl)
+				if tc.main.Bridge.Config.ViewLimitedMedia {
+					content.BeeperViewLimited = telegramViewLimit(ttl)
+				} else {
+					if ttl == telegramViewOnceTTL {
+						ttl = 15
+					}
+					disappearingSetting = &database.DisappearingSetting{
+						Type:  event.DisappearingTypeAfterRead,
+						Timer: time.Duration(ttl) * time.Second,
+					}
+				}
 			}
 		}
 	}

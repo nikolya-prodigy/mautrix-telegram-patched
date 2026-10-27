@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"time"
 
+	"github.com/rs/zerolog"
 	"go.mau.fi/util/jsontime"
 	"go.mau.fi/util/ptr"
 	"go.mau.fi/util/variationselector"
@@ -61,7 +62,7 @@ func (tc *TelegramConnector) GetCapabilities() *bridgev2.NetworkGeneralCapabilit
 }
 
 func (tc *TelegramConnector) GetBridgeInfoVersion() (info, capabilities int) {
-	return 1, 13
+	return 1, 15
 }
 
 // TODO get these from getConfig instead of hardcoding?
@@ -225,7 +226,7 @@ func viewLimitedFileCaps(base event.FileFeatureMap) event.FileFeatureMap {
 var telegramTimers = makeTimerList()
 
 func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.Portal) *event.RoomFeatures {
-	baseID := "fi.mau.telegram.capabilities.2026_10_05"
+	baseID := "fi.mau.telegram.capabilities.2026_10_11"
 	feat := &event.RoomFeatures{
 		Formatting:          formattingCaps,
 		File:                fileCaps,
@@ -278,17 +279,18 @@ func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.
 	peerType, id, topicID, _ := ids.ParsePortalID(portal.ID)
 	switch peerType {
 	case ids.PeerTypeChat:
-		feat.ID += "minigroup"
+		baseID += "+minigroup"
 		feat.MemberActions = map[event.MemberAction]event.CapabilitySupportLevel{
 			event.MemberActionBan:    event.CapLevelFullySupported,
 			event.MemberActionInvite: event.CapLevelFullySupported,
 			event.MemberActionLeave:  event.CapLevelFullySupported,
 			// Note: unban and kick are not supported
 		}
-		// Minigroups can always be deleted
+		// Minigroups can always be deleted, non-creators leave instead
+		feat.DeleteChat = true
 		feat.DeleteChatForEveryone = true
 	case ids.PeerTypeChannel:
-		feat.ID += "channel"
+		baseID += "+channel"
 		feat.MemberActions = map[event.MemberAction]event.CapabilitySupportLevel{
 			event.MemberActionBan:    event.CapLevelFullySupported,
 			event.MemberActionKick:   event.CapLevelFullySupported,
@@ -298,7 +300,11 @@ func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.
 		// Group creators can delete the chat for everyone, unless it's a large channel
 		if portalMetadata.ParticipantsCount < 1000 || topicID > 0 {
 			feat.DeleteChatForEveryone = true
+		} else {
+			baseID += "+large"
 		}
+		// Anyone can delete a non-topic channel for themselves by leaving it
+		feat.DeleteChat = topicID == 0
 	case ids.PeerTypeUser:
 		baseID += "+dm"
 		feat.BlockUser = !tc.metadata.IsBot && id != tc.telegramUserID
@@ -329,4 +335,21 @@ func (tc *TelegramClient) GetCapabilities(ctx context.Context, portal *bridgev2.
 
 	feat.ID = baseID
 	return feat
+}
+
+func (tc *TelegramClient) resendCapabilities(ctx context.Context) {
+	log := zerolog.Ctx(ctx)
+	userPortals, err := tc.main.Bridge.DB.UserPortal.GetAllForLogin(ctx, tc.userLogin.UserLogin)
+	if err != nil {
+		log.Err(err).Msg("Failed to get portals to resend capabilities")
+		return
+	}
+	for _, up := range userPortals {
+		portal, err := tc.main.Bridge.GetExistingPortalByKey(ctx, up.Portal)
+		if err != nil {
+			log.Err(err).Object("portal_key", up.Portal).Msg("Failed to get portal to resend capabilities")
+		} else if portal != nil {
+			portal.UpdateCapabilities(ctx, tc.userLogin, true)
+		}
+	}
 }

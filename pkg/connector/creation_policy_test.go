@@ -9,6 +9,7 @@
 package connector
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,11 +18,46 @@ import (
 	"strings"
 	"testing"
 
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/require"
+	"go.mau.fi/util/dbutil"
+	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/bridgeconfig"
+	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
 
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
 )
+
+func TestZeroMemberSyncDoesNotFetchAdmins(t *testing.T) {
+	tc := &TelegramClient{main: &TelegramConnector{}}
+	members := &bridgev2.ChatMemberList{}
+	require.NoError(t, tc.fillChannelMembers(context.Background(), &memberFetchMeta{Input: &tg.InputChannel{ChannelID: 123}}, members))
+	require.Empty(t, members.MemberMap)
+}
+
+func TestDialogMigrationSkipsUnbridgedChats(t *testing.T) {
+	ctx := context.Background()
+	db, err := dbutil.NewWithDialect(":memory:?_foreign_keys=on", "sqlite3")
+	require.NoError(t, err)
+	db.RawDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	bridgeDB := database.New("", database.MetaTypes{}, db)
+	require.NoError(t, bridgeDB.Upgrade(ctx))
+	tc := &TelegramClient{main: &TelegramConnector{
+		Bridge: &bridgev2.Bridge{Config: &bridgeconfig.BridgeConfig{}, DB: bridgeDB},
+		Config: TelegramConfig{AlwaysTombstoneOnSupergroupMigration: true},
+	}}
+	migrated, err := tc.checkDialogMigrated(ctx, &tg.Dialog{Peer: &tg.PeerChat{ChatID: 42}}, map[int64]tg.ChatClass{
+		42: &tg.Chat{ID: 42, MigratedTo: &tg.InputChannel{ChannelID: 123}},
+	})
+	require.NoError(t, err)
+	require.True(t, migrated)
+	var count int
+	require.NoError(t, db.QueryRow(ctx, "SELECT COUNT(*) FROM portal").Scan(&count))
+	require.Zero(t, count)
+}
 
 func TestMatrixCreationCallsGoThroughPolicy(t *testing.T) {
 	_, filename, _, ok := runtime.Caller(0)

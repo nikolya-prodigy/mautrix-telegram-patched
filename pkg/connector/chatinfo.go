@@ -94,18 +94,13 @@ func adminRightsToPowerLevel(rights tg.ChatAdminRights) *int {
 	return otherPowerLevel
 }
 
-func (tc *TelegramClient) getDMChatInfo(ctx context.Context, userID int64) (*bridgev2.ChatInfo, error) {
-	ghost, err := tc.getGhostByIDWithPolicy(ctx, ids.MakeUserID(userID), createReasonChatInfo, true)
-	if err != nil {
-		return nil, err
-	}
-
+func (tc *TelegramClient) getDMChatInfo(userID int64) (*bridgev2.ChatInfo, error) {
 	chatInfo := bridgev2.ChatInfo{
 		Type: ptr.Ptr(database.RoomTypeDM),
 		Members: &bridgev2.ChatMemberList{
 			IsFull:      true,
 			MemberMap:   map[networkid.UserID]bridgev2.ChatMember{},
-			PowerLevels: tc.getDMPowerLevels(ghost),
+			PowerLevels: tc.getDMPowerLevels(),
 		},
 		CanBackfill:  !tc.metadata.IsBot,
 		ExtraUpdates: updatePortalLastSyncAt,
@@ -275,6 +270,9 @@ func (tc *TelegramClient) fillChannelMembers(ctx context.Context, mfm *memberFet
 		return nil
 	}
 	memberSyncLimit := tc.main.Config.MemberList.NormalizedMaxInitialSync()
+	if memberSyncLimit == 0 {
+		return nil
+	}
 
 	if memberSyncLimit <= 200 {
 		participants, err := tc.getChannelParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
@@ -317,6 +315,21 @@ func (tc *TelegramClient) fillChannelMembers(ctx context.Context, mfm *memberFet
 			offset += len(participants.Participants)
 			remaining -= len(participants.Participants)
 		}
+	}
+
+	if info.IsFull {
+		return nil
+	}
+	admins, err := tc.getChannelParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
+		Channel: mfm.Input,
+		Filter:  &tg.ChannelParticipantsAdmins{},
+		Limit:   100,
+	})
+	if err != nil || admins == nil {
+		return err
+	}
+	for participant := range tc.filterChannelParticipants(admins.Participants, len(admins.Participants)) {
+		info.MemberMap.Set(participant)
 	}
 	return nil
 }
@@ -552,7 +565,7 @@ func (tc *TelegramClient) getChatInfo(ctx context.Context, portal *bridgev2.Port
 
 	switch peerType {
 	case ids.PeerTypeUser:
-		return tc.getDMChatInfo(ctx, id)
+		return tc.getDMChatInfo(id)
 	case ids.PeerTypeChat:
 		fullChat, err := APICallWithUpdates(ctx, tc, func() (*tg.MessagesChatFull, error) {
 			return tc.client.API().MessagesGetFullChat(ctx, id)
@@ -637,8 +650,9 @@ func getTopicInfoFromResponse(resp *tg.MessagesForumTopics, channelID int64, top
 	return
 }
 
-func (tc *TelegramClient) getDMPowerLevels(ghost *bridgev2.Ghost) *bridgev2.PowerLevelOverrides {
+func (tc *TelegramClient) getDMPowerLevels() *bridgev2.PowerLevelOverrides {
 	var plo bridgev2.PowerLevelOverrides
+	plo.Redact = anyonePowerLevel
 	plo.EventsDefault = anyonePowerLevel
 	plo.Events = map[event.Type]int{
 		event.StateRoomName:                0,
