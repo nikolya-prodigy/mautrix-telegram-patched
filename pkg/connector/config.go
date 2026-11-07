@@ -125,6 +125,7 @@ type TelegramConfig struct {
 	ContactAvatars                       bool                `yaml:"contact_avatars"`
 	ContactNames                         bool                `yaml:"contact_names"`
 	MaxMemberCount                       int                 `yaml:"max_member_count"`
+	MaxTelegramDelete                    int                 `yaml:"max_telegram_delete"`
 	AlwaysCustomEmojiReaction            bool                `yaml:"always_custom_emoji_reaction"`
 	SavedMessagesAvatar                  id.ContentURIString `yaml:"saved_message_avatar"`
 	AlwaysTombstoneOnSupergroupMigration bool                `yaml:"always_tombstone_on_supergroup_migration"`
@@ -132,6 +133,7 @@ type TelegramConfig struct {
 	DisableViewOnce                      bool                `yaml:"disable_view_once"`
 	VideoURLPreviewAsFile                bool                `yaml:"video_url_preview_as_file"`
 	BridgeCommunities                    bool                `yaml:"bridge_communities"`
+	ExtEvPolls                           bool                `yaml:"extev_polls"`
 	DisplaynameTemplate                  string              `yaml:"displayname_template"`
 	displaynameTemplate                  *template.Template  `yaml:"-"`
 }
@@ -142,6 +144,10 @@ func (c TelegramConfig) ShouldBridge(participantCount int) bool {
 
 func (c TelegramConfig) ContactListEnabled() bool {
 	return c.ContactList.Enabled == nil || *c.ContactList.Enabled
+}
+
+func (c TelegramConfig) ShouldBridgeDeletion(deletedMessageCount int) bool {
+	return c.MaxTelegramDelete < 0 || deletedMessageCount <= c.MaxTelegramDelete
 }
 
 type DisplaynameParams struct {
@@ -233,6 +239,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "contact_avatars")
 	helper.Copy(up.Bool, "contact_names")
 	helper.Copy(up.Int, "max_member_count")
+	helper.Copy(up.Int, "max_telegram_delete")
 	helper.Copy(up.Bool, "always_custom_emoji_reaction")
 	helper.Copy(up.Str, "saved_message_avatar")
 	helper.Copy(up.Bool, "always_tombstone_on_supergroup_migration")
@@ -240,6 +247,7 @@ func upgradeConfig(helper up.Helper) {
 	helper.Copy(up.Bool, "disable_view_once")
 	helper.Copy(up.Bool, "video_url_preview_as_file")
 	helper.Copy(up.Bool, "bridge_communities")
+	helper.Copy(up.Bool, "extev_polls")
 	helper.Copy(up.Str, "displayname_template")
 }
 

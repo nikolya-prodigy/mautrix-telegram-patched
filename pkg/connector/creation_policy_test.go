@@ -34,17 +34,33 @@ func TestZeroMemberSyncDoesNotFetchAdmins(t *testing.T) {
 	tc := &TelegramClient{main: &TelegramConnector{}}
 	members := &bridgev2.ChatMemberList{}
 	require.NoError(t, tc.fillChannelMembers(context.Background(), &memberFetchMeta{Input: &tg.InputChannel{ChannelID: 123}}, members))
+	require.NoError(t, tc.fillTopicMembers(context.Background(), 123, &memberFetchMeta{Input: &tg.InputChannel{ChannelID: 123}}, members))
 	require.Empty(t, members.MemberMap)
 }
 
-func TestDialogMigrationSkipsUnbridgedChats(t *testing.T) {
-	ctx := context.Background()
+func newPolicyTestDatabase(t *testing.T) *database.Database {
+	t.Helper()
 	db, err := dbutil.NewWithDialect(":memory:?_foreign_keys=on", "sqlite3")
 	require.NoError(t, err)
 	db.RawDB.SetMaxOpenConns(1)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	bridgeDB := database.New("", database.MetaTypes{}, db)
-	require.NoError(t, bridgeDB.Upgrade(ctx))
+	require.NoError(t, bridgeDB.Upgrade(context.Background()))
+	return bridgeDB
+}
+
+func TestPollCapabilitiesDoNotCreateGhosts(t *testing.T) {
+	bridgeDB := newPolicyTestDatabase(t)
+	tc := &TelegramClient{main: &TelegramConnector{Bridge: &bridgev2.Bridge{DB: bridgeDB}}}
+	require.False(t, tc.isBotUser(context.Background(), 123))
+	var count int
+	require.NoError(t, bridgeDB.QueryRow(context.Background(), "SELECT COUNT(*) FROM ghost").Scan(&count))
+	require.Zero(t, count)
+}
+
+func TestDialogMigrationSkipsUnbridgedChats(t *testing.T) {
+	ctx := context.Background()
+	bridgeDB := newPolicyTestDatabase(t)
 	tc := &TelegramClient{main: &TelegramConnector{
 		Bridge: &bridgev2.Bridge{Config: &bridgeconfig.BridgeConfig{}, DB: bridgeDB},
 		Config: TelegramConfig{AlwaysTombstoneOnSupergroupMigration: true},
@@ -55,7 +71,7 @@ func TestDialogMigrationSkipsUnbridgedChats(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, migrated)
 	var count int
-	require.NoError(t, db.QueryRow(ctx, "SELECT COUNT(*) FROM portal").Scan(&count))
+	require.NoError(t, bridgeDB.QueryRow(ctx, "SELECT COUNT(*) FROM portal").Scan(&count))
 	require.Zero(t, count)
 }
 

@@ -37,6 +37,8 @@ type internalState struct {
 	// Updates channel.
 	externalQueue chan tracedUpdate
 
+	deferredExternal []tracedUpdate
+
 	// Updates from channel states
 	// during updates.getChannelDifference.
 	internalQueue chan tracedUpdate
@@ -175,6 +177,13 @@ func (s *internalState) Run(ctx context.Context) error {
 	}
 
 	for {
+		for len(s.deferredExternal) > 0 {
+			u := s.deferredExternal[0]
+			s.deferredExternal = s.deferredExternal[1:]
+			if err = s.handleUpdates(trace.ContextWithSpanContext(ctx, u.span), u.update); err != nil {
+				return fmt.Errorf("handleUpdates for deferred external update failed: %w", err)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("parent context cancelled: %w", ctx.Err())
@@ -493,13 +502,31 @@ func (s *internalState) getDifferenceWithRetry(ctx context.Context, date int) (d
 		if ok {
 			s.log.Warn("Flood wait error while getting difference", zap.Duration("wait", dur))
 		} else {
-			s.log.Error("Failed to get difference, retrying in 5 seconds...", zap.Error(err))
+			s.log.Error("Failed to get difference, retrying in 5 seconds...",
+				zap.Error(err),
+				zap.Int("pts", s.pts.State()),
+				zap.Int("qts", s.qts.State()),
+				zap.Int("date", date),
+			)
 			dur = 5 * time.Second
 		}
+		if err = s.waitToRetryDifference(ctx, dur); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (s *internalState) waitToRetryDifference(ctx context.Context, dur time.Duration) error {
+	timer := time.NewTimer(dur)
+	defer timer.Stop()
+	for {
 		select {
-		case <-time.After(dur):
+		case <-timer.C:
+			return nil
+		case u := <-s.externalQueue:
+			s.deferredExternal = append(s.deferredExternal, u)
 		case <-ctx.Done():
-			return nil, fmt.Errorf("context canceled while waiting to retry: %w", ctx.Err())
+			return fmt.Errorf("context canceled while waiting to retry: %w", ctx.Err())
 		}
 	}
 }
