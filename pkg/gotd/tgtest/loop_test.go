@@ -22,11 +22,11 @@ import (
 )
 
 func TestSessionHandle(t *testing.T) {
-	test := func(storage session.Storage, t *testing.T) error {
+	test := func(storage session.Storage, timeout time.Duration, t *testing.T) error {
 		log := zaptest.NewLogger(t)
 		defer func() { _ = log.Sync() }()
 
-		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 
 		g := tdsync.NewCancellableGroup(ctx)
@@ -71,7 +71,7 @@ func TestSessionHandle(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
 		a := require.New(t)
 		storage := session.StorageMemory{}
-		a.NoError(test(&storage, t))
+		a.NoError(test(&storage, time.Minute, t))
 
 		_, err := storage.Bytes(nil)
 		a.NoError(err, "Must create new session")
@@ -92,7 +92,8 @@ func TestSessionHandle(t *testing.T) {
 			AuthKeyID: authKey.ID[:],
 		}
 		a.NoError(loader.Save(context.Background(), was))
-		a.NoError(test(loader.Storage, t))
+		// Allow the one-minute reconnect grace period before the key is replaced.
+		a.NoError(test(loader.Storage, 2*time.Minute, t))
 
 		data, err := loader.Load(ctx)
 		a.NoError(err)

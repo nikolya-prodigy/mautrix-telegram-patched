@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -153,6 +154,14 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 			aggressiveDedup = true
 		}
 	}
+	if !fetchParams.Forward && fetchParams.Cursor != "" {
+		cursorID, err := strconv.Atoi(string(fetchParams.Cursor))
+		if err != nil {
+			log.Warn().Err(err).Str("cursor", string(fetchParams.Cursor)).Msg("Failed to parse pagination cursor")
+		} else if offsetID == 0 || cursorID < offsetID {
+			offsetID = cursorID
+		}
+	}
 	origOffsetID := offsetID
 	if fetchParams.Portal.Metadata.(*PortalMetadata).IsForumGeneral {
 		topicID = 1
@@ -189,6 +198,12 @@ func (tc *TelegramClient) FetchMessages(ctx context.Context, fetchParams bridgev
 		}
 		log.Info().Any("req", req).Msg("Fetching messages")
 		resp, err := APICallWithUpdates(ctx, tc, func() (tg.ModifiedMessagesMessages, error) {
+			if takeoutID == 0 {
+				if err := tc.fetchMessagesSema.Acquire(ctx, 1); err != nil {
+					return nil, err
+				}
+				defer tc.fetchMessagesSema.Release(1)
+			}
 			var box tg.MessagesMessagesBox
 			retry := true
 			attempts := 0
