@@ -43,7 +43,6 @@ import (
 	"maunium.net/go/mautrix/bridgev2/simplevent"
 	"maunium.net/go/mautrix/bridgev2/status"
 
-	"go.mau.fi/mautrix-telegram/pkg/connector/humanise"
 	"go.mau.fi/mautrix-telegram/pkg/connector/ids"
 	"go.mau.fi/mautrix-telegram/pkg/connector/matrixfmt"
 	"go.mau.fi/mautrix-telegram/pkg/connector/store"
@@ -54,6 +53,7 @@ import (
 	"go.mau.fi/mautrix-telegram/pkg/gotd/telegram/auth"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/telegram/updates"
 	"go.mau.fi/mautrix-telegram/pkg/gotd/tg"
+	"go.mau.fi/mautrix-telegram/pkg/gotd/tgerr"
 )
 
 var (
@@ -74,6 +74,9 @@ func init() {
 		"tg-client-dead":        "Disconnected from Telegram, reconnecting",
 		"tg-connectivity-error": "Lost connection to Telegram, reconnecting",
 		"tg-unknown-error":      "The Telegram connection failed unexpectedly",
+		"tg-logged-out":         "You were logged out of Telegram. Relogin to continue using the bridge.",
+		"tg-not-logged-in":      "You're not logged into Telegram. Relogin to continue using the bridge.",
+		"tg-user-deactivated":   "Your Telegram account was deleted or banned.",
 	})
 }
 
@@ -129,12 +132,17 @@ type TelegramClient struct {
 	contactsLock       sync.Mutex
 	lastContactReq     time.Time
 
+	resolvePhoneLock sync.Mutex
+	lastResolvePhone time.Time
+
 	dcTransferLock sync.Mutex
 
 	fetchMessagesSema *semaphore.Weighted
 
 	topicMembersLock sync.Mutex
 	topicMembers     map[int64]cachedChannelMembers
+
+	forbiddenSenderChecks *exsync.Map[string, time.Time]
 
 	takeoutLock        sync.Mutex
 	takeoutAccepted    *exsync.Event
@@ -151,7 +159,10 @@ type TelegramClient struct {
 	stickerPackCacheLock sync.Mutex
 }
 
-var _ bridgev2.NetworkAPI = (*TelegramClient)(nil)
+var (
+	_ bridgev2.NetworkAPI                        = (*TelegramClient)(nil)
+	_ bridgev2.MatrixSendErrorHandlingNetworkAPI = (*TelegramClient)(nil)
+)
 
 var messageLinkRegex = regexp.MustCompile(`^https?://t(?:elegram)?\.(?:me|dog)/([A-Za-z][A-Za-z0-9_]{3,31}[A-Za-z0-9]|[Cc]/[0-9]{1,20})/([0-9]{1,20})(?:/([0-9]{1,20}))?$`)
 
@@ -208,8 +219,9 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 		stickerPacksByName: map[string]*stickerPackCache{},
 		stickerPacksByID:   map[int64]*stickerPackCache{},
 
-		recentMessageRooms: exsync.NewRingBuffer[networkid.MessageID, networkid.PortalKey](32),
-		chatMigrateSender:  exsync.NewMap[int64, bridgev2.EventSender](),
+		recentMessageRooms:    exsync.NewRingBuffer[networkid.MessageID, networkid.PortalKey](32),
+		chatMigrateSender:     exsync.NewMap[int64, bridgev2.EventSender](),
+		forbiddenSenderChecks: exsync.NewMap[string, time.Time](),
 
 		clientInitialized: exsync.NewEvent(),
 		clientDone:        exsync.NewEvent(),
@@ -225,6 +237,7 @@ func NewTelegramClient(ctx context.Context, tc *TelegramConnector, login *bridge
 	client.updatesManager = updates.New(updates.Config{
 		OnNotChannelMember: client.onNotChannelMember,
 		OnDifferenceStuck:  client.onDifferenceStuck,
+		OnEntities:         client.onEntitiesWrapper,
 		OnChannelTooLong: func(channelID int64) error {
 			// TODO resync topics?
 			res := tc.Bridge.QueueRemoteEvent(login, &simplevent.ChatResync{
@@ -481,11 +494,20 @@ func (tc *TelegramClient) shouldRecoverClosedEngine(err error) bool {
 }
 
 func (tc *TelegramClient) sendBadCredentialsOrUnknownError(err error) {
-	if auth.IsUnauthorized(err) || errors.Is(err, ErrNoAuthKey) {
+	if errors.Is(err, ErrNoAuthKey) {
 		tc.userLogin.BridgeState.Send(status.BridgeState{
 			StateEvent: status.StateBadCredentials,
-			Error:      "tg-no-auth",
-			Message:    humanise.Error(err),
+			Error:      "tg-not-logged-in",
+			UserAction: status.UserActionRelogin,
+		})
+	} else if auth.IsUnauthorized(err) {
+		errorCode := status.BridgeStateErrorCode("tg-logged-out")
+		if tgerr.Is(err, "USER_DEACTIVATED", "USER_DEACTIVATED_BAN") {
+			errorCode = "tg-user-deactivated"
+		}
+		tc.userLogin.BridgeState.Send(status.BridgeState{
+			StateEvent: status.StateBadCredentials,
+			Error:      errorCode,
 			UserAction: status.UserActionRelogin,
 			Info: map[string]any{
 				"go_error": err.Error(),
@@ -513,7 +535,11 @@ func (tc *TelegramClient) onPing() {
 	me, err := tc.client.Self(ctx)
 	if auth.IsUnauthorized(err) {
 		tc.onAuthError(err)
-	} else if errors.Is(err, syscall.EPIPE) || errors.Is(err, pool.ErrConnDead) {
+	} else if errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, pool.ErrConnDead) ||
+		errors.Is(err, rpc.ErrEngineClosed) ||
+		errors.Is(err, &rpc.RetryLimitReachedErr{}) ||
+		errors.Is(err, context.Canceled) {
 		// Connectivity error — connection died during the Self() call.
 		// Keep as transient; gotd's backoff will reconnect.
 		tc.userLogin.BridgeState.Send(status.BridgeState{
@@ -535,15 +561,12 @@ func (tc *TelegramConnector) userToRemoteProfile(
 	ghost *bridgev2.Ghost,
 	prevState *status.RemoteProfile,
 ) (profile status.RemoteProfile, name string) {
-	profile.Name = tc.Config.FormatDisplayname(self.FirstName, self.LastName, self.Username, self.Deleted, self.ID)
+	profile.Username = primaryUsername(self.Username, self.Usernames)
+	profile.Name = tc.Config.FormatDisplayname(self.FirstName, self.LastName, profile.Username, self.Deleted, self.ID)
 	if self.Phone != "" {
 		profile.Phone = "+" + strings.TrimPrefix(self.Phone, "+")
 	} else if prevState != nil {
 		profile.Phone = prevState.Phone
-	}
-	profile.Username = self.Username
-	if self.Username == "" && len(self.Usernames) > 0 {
-		profile.Username = self.Usernames[0].Username
 	}
 	if ghost != nil {
 		profile.Avatar = ghost.AvatarMXC

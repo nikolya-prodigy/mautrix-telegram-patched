@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.mau.fi/util/jsontime"
 	"maunium.net/go/mautrix/bridgev2"
+	"maunium.net/go/mautrix/bridgev2/bridgeconfig"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/event"
 
@@ -35,15 +36,21 @@ func TestDisabledViewOnceMediaDoesNotUpload(t *testing.T) {
 	photo.SetTTLSeconds(telegramViewOnceTTL)
 	document := &tg.MessageMediaDocument{}
 	document.SetTTLSeconds(telegramViewOnceTTL)
+	voice := &tg.MessageMediaDocument{Voice: true}
+	voice.SetTTLSeconds(telegramViewOnceTTL)
 	for _, test := range []struct {
 		name  string
 		media tg.MessageMediaClass
 	}{
 		{"photo", photo},
 		{"file", document},
+		{"voice message", voice},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			tc := &TelegramClient{main: &TelegramConnector{Config: TelegramConfig{DisableViewOnce: true}}}
+			tc := &TelegramClient{main: &TelegramConnector{
+				Bridge: &bridgev2.Bridge{Config: &bridgeconfig.BridgeConfig{ViewLimitedMedia: true}},
+				Config: TelegramConfig{DisableViewOnce: true},
+			}}
 			portal := &bridgev2.Portal{Portal: &database.Portal{}}
 			// A nil Telegram client ensures the disabled media never reaches upload setup.
 			converted, disappearing := tc.convertMediaRequiringUpload(context.Background(), portal, nil, &tg.Message{ID: 1}, test.media, false)

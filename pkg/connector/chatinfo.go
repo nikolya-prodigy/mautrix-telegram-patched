@@ -19,6 +19,7 @@ package connector
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"iter"
 	"maps"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"go.mau.fi/util/ptr"
+	"maunium.net/go/mautrix"
 	"maunium.net/go/mautrix/bridgev2"
 	"maunium.net/go/mautrix/bridgev2/database"
 	"maunium.net/go/mautrix/bridgev2/networkid"
@@ -267,14 +269,19 @@ func (tc *TelegramClient) getChannelParticipants(ctx context.Context, req *tg.Ch
 }
 
 func (tc *TelegramClient) fillChannelMembers(ctx context.Context, mfm *memberFetchMeta, info *bridgev2.ChatMemberList) error {
-	if mfm.Input == nil || mfm.ParticipantsHidden || (mfm.IsBroadcast && !tc.main.Config.MemberList.SyncBroadcastChannels) {
-		return nil
-	}
 	memberSyncLimit := tc.main.Config.MemberList.NormalizedMaxInitialSync()
-	if memberSyncLimit == 0 {
+	if memberSyncLimit == 0 || mfm.Input == nil || (mfm.IsBroadcast && !tc.main.Config.MemberList.SyncBroadcastChannels) {
+		return nil
+	} else if mfm.ParticipantsHidden {
+		if mfm.IsBroadcast {
+			return nil
+		}
+		err := tc.fillChannelAdmins(ctx, mfm.Input, info.MemberMap)
+		if err != nil {
+			zerolog.Ctx(ctx).Warn().Err(err).Msg("Failed to get admins of channel with hidden participants")
+		}
 		return nil
 	}
-
 	if memberSyncLimit <= 200 {
 		participants, err := tc.getChannelParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
 			Channel: mfm.Input,
@@ -321,8 +328,12 @@ func (tc *TelegramClient) fillChannelMembers(ctx context.Context, mfm *memberFet
 	if info.IsFull {
 		return nil
 	}
+	return tc.fillChannelAdmins(ctx, mfm.Input, info.MemberMap)
+}
+
+func (tc *TelegramClient) fillChannelAdmins(ctx context.Context, input *tg.InputChannel, members bridgev2.ChatMemberMap) error {
 	admins, err := tc.getChannelParticipants(ctx, &tg.ChannelsGetParticipantsRequest{
-		Channel: mfm.Input,
+		Channel: input,
 		Filter:  &tg.ChannelParticipantsAdmins{},
 		Limit:   100,
 	})
@@ -330,7 +341,7 @@ func (tc *TelegramClient) fillChannelMembers(ctx context.Context, mfm *memberFet
 		return err
 	}
 	for participant := range tc.filterChannelParticipants(admins.Participants, len(admins.Participants)) {
-		info.MemberMap.Set(participant)
+		members.Set(participant)
 	}
 	return nil
 }
@@ -455,6 +466,10 @@ func (tc *TelegramClient) wrapFullChatInfo(portalID networkid.PortalID, fullChat
 		memberSyncLimit := tc.main.Config.MemberList.NormalizedMaxInitialSync()
 		info.Members.IsFull = true
 		for i, user := range participants.GetParticipants() {
+			if i >= memberSyncLimit {
+				info.Members.IsFull = false
+				break
+			}
 			var powerLevel *int
 			switch user.(type) {
 			case *tg.ChatParticipantCreator:
@@ -470,10 +485,6 @@ func (tc *TelegramClient) wrapFullChatInfo(portalID networkid.PortalID, fullChat
 				PowerLevel:  powerLevel,
 			})
 
-			if i >= memberSyncLimit {
-				info.Members.IsFull = false
-				break
-			}
 		}
 	case *tg.ChannelFull:
 		mfm.ParticipantsHidden = !typedFullChat.CanViewParticipants || typedFullChat.ParticipantsHidden
@@ -698,6 +709,116 @@ func (tc *TelegramClient) getDMPowerLevels() *bridgev2.PowerLevelOverrides {
 	return &plo
 }
 
+func (tc *TelegramClient) HandleMatrixSendError(ctx context.Context, sendErr *bridgev2.MatrixSendError) bool {
+	if !errors.Is(sendErr.Err, mautrix.MForbidden) || !sendErr.Portal.Metadata.(*PortalMetadata).IsSuperGroup {
+		return false
+	}
+	peerType, channelID, _, err := ids.ParsePortalID(sendErr.Portal.ID)
+	if err != nil || peerType != ids.PeerTypeChannel {
+		return false
+	}
+	ghostID, ok := tc.main.Bridge.Matrix.ParseGhostMXID(sendErr.Intent.GetMXID())
+	if !ok {
+		return false
+	}
+	senderType, userID, err := ids.ParseUserID(ghostID)
+	if err != nil || (senderType == ids.PeerTypeChannel && userID != channelID) {
+		return false
+	}
+	checkKey := fmt.Sprintf("%s/%s", sendErr.Portal.ID, ghostID)
+	if prev, ok := tc.forbiddenSenderChecks.Get(checkKey); ok && time.Since(prev) < time.Hour {
+		return false
+	}
+	tc.forbiddenSenderChecks.Set(checkKey, time.Now())
+	log := zerolog.Ctx(ctx).With().Str("forbidden_sender_id", string(ghostID)).Logger()
+	if senderType == ids.PeerTypeChannel {
+		pl, err := tc.main.Bridge.Matrix.GetPowerLevels(ctx, sendErr.Portal.MXID)
+		if err != nil {
+			log.Err(err).Msg("Failed to get power levels to check forbidden sender")
+			return false
+		} else if pl.GetUserLevel(sendErr.Intent.GetMXID()) >= max(pl.GetEventLevel(sendErr.EventType), pl.GetEventLevel(event.EventEncrypted)) {
+			return false
+		}
+		info, err := tc.getChatInfo(ctx, sendErr.Portal)
+		if err != nil {
+			log.Err(err).Msg("Failed to get chat info to check forbidden sender")
+			return false
+		}
+		log.Debug().Msg("Updating power levels after homeserver rejected anonymous admin message")
+		sendErr.Portal.UpdateInfo(ctx, &bridgev2.ChatInfo{
+			Members: &bridgev2.ChatMemberList{PowerLevels: info.Members.PowerLevels},
+		}, tc.userLogin, nil, time.Time{})
+		pl, err = tc.main.Bridge.Matrix.GetPowerLevels(ctx, sendErr.Portal.MXID)
+		if err != nil || pl.GetUserLevel(sendErr.Intent.GetMXID()) < max(pl.GetEventLevel(sendErr.EventType), pl.GetEventLevel(event.EventEncrypted)) {
+			return false
+		}
+		tc.forbiddenSenderChecks.Delete(checkKey)
+		return true
+	}
+	accessHash, err := tc.ScopedStore.GetAccessHash(ctx, ids.PeerTypeChannel, channelID)
+	if err != nil {
+		log.Err(err).Msg("Failed to get channel access hash to check forbidden sender")
+		return false
+	}
+	inputChannel := &tg.InputChannel{ChannelID: channelID, AccessHash: accessHash}
+	members := bridgev2.ChatMemberMap{}
+	if tc.main.Config.MemberList.NormalizedMaxInitialSync() > 0 {
+		if err := tc.fillChannelAdmins(ctx, inputChannel, members); err != nil {
+			log.Err(err).Msg("Failed to get admins to check forbidden sender")
+		}
+	}
+	member, ok := members[ghostID]
+	if !ok {
+		log.Debug().Msg("Forbidden sender not found in admin list, fetching single participant")
+		inputPeer, err := tc.getInputPeerUser(ctx, userID)
+		if err != nil {
+			log.Err(err).Msg("Failed to get input peer to check forbidden sender")
+			return false
+		}
+		resp, err := APICallWithUpdates(ctx, tc, func() (*tg.ChannelsChannelParticipant, error) {
+			return tc.client.API().ChannelsGetParticipant(ctx, &tg.ChannelsGetParticipantRequest{
+				Channel:     inputChannel,
+				Participant: inputPeer,
+			})
+		})
+		if err != nil {
+			log.Err(err).Msg("Failed to get participant info for forbidden sender")
+			return false
+		}
+		for participant := range tc.filterChannelParticipants([]tg.ChannelParticipantClass{resp.Participant}, 1) {
+			member = participant
+			ok = true
+		}
+		if !ok {
+			return false
+		}
+		members.Set(member)
+	}
+	pl, err := tc.main.Bridge.Matrix.GetPowerLevels(ctx, sendErr.Portal.MXID)
+	if err != nil {
+		log.Err(err).Msg("Failed to get power levels to check forbidden sender")
+		return false
+	}
+	requiredLevel := max(pl.GetEventLevel(sendErr.EventType), pl.GetEventLevel(event.EventEncrypted))
+	if member.PowerLevel == nil || *member.PowerLevel < requiredLevel ||
+		*member.PowerLevel <= pl.GetUserLevel(sendErr.Intent.GetMXID()) {
+		return false
+	}
+	log.Debug().
+		Int("power_level", *member.PowerLevel).
+		Int("member_count", len(members)).
+		Msg("Updating power levels after homeserver rejected message")
+	sendErr.Portal.UpdateInfo(ctx, &bridgev2.ChatInfo{
+		Members: &bridgev2.ChatMemberList{MemberMap: members},
+	}, tc.userLogin, nil, time.Time{})
+	pl, err = tc.main.Bridge.Matrix.GetPowerLevels(ctx, sendErr.Portal.MXID)
+	if err != nil || pl.GetUserLevel(sendErr.Intent.GetMXID()) < requiredLevel {
+		return false
+	}
+	tc.forbiddenSenderChecks.Delete(checkKey)
+	return true
+}
+
 func (tc *TelegramClient) getPowerLevelOverridesFromBannedRights(entity tg.ChatClass, dbr tg.ChatBannedRights) *bridgev2.PowerLevelOverrides {
 	var plo bridgev2.PowerLevelOverrides
 	plo.Ban = banUsersPowerLevel
@@ -769,6 +890,12 @@ func (tc *TelegramClient) getPowerLevelOverridesFromBannedRights(entity tg.ChatC
 
 	if dbr.SendPolls {
 		plo.Events[event.EventUnstablePollStart] = *postMessagesPowerLevel
+	}
+
+	if dbr.SendReactions {
+		plo.Events[event.EventReaction] = *otherPowerLevel
+	} else {
+		plo.Events[event.EventReaction] = 0
 	}
 	plo.Events[event.EventUnstablePollResponse] = 0
 

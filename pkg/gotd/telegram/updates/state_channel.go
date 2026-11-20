@@ -3,6 +3,7 @@ package updates
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	"github.com/go-faster/errors"
@@ -42,6 +43,7 @@ type channelState struct {
 	tracer     trace.Tracer
 	handler    telegram.UpdateHandler
 	onTooLong  func(channelID int64) error
+	onEntities func(ctx context.Context, users []tg.UserClass, chats []tg.ChatClass) error
 
 	runCtx context.Context
 	stop   context.CancelCauseFunc
@@ -58,6 +60,7 @@ type channelStateConfig struct {
 	Storage          StateStorage
 	Handler          telegram.UpdateHandler
 	OnChannelTooLong func(channelID int64) error
+	OnEntities       func(ctx context.Context, users []tg.UserClass, chats []tg.ChatClass) error
 	Logger           *zap.Logger
 	Tracer           trace.Tracer
 }
@@ -67,7 +70,7 @@ func newChannelState(ctx context.Context, cfg channelStateConfig) *channelState 
 		updates: make(chan channelUpdate, 10),
 		out:     cfg.Out,
 
-		idleTimeout: time.NewTimer(idleTimeout),
+		idleTimeout: time.NewTimer(channelIdleTimeout()),
 
 		channelID:  cfg.ChannelID,
 		accessHash: cfg.AccessHash,
@@ -78,6 +81,7 @@ func newChannelState(ctx context.Context, cfg channelStateConfig) *channelState 
 		log:        cfg.Logger,
 		handler:    cfg.Handler,
 		onTooLong:  cfg.OnChannelTooLong,
+		onEntities: cfg.OnEntities,
 		tracer:     cfg.Tracer,
 	}
 
@@ -276,6 +280,9 @@ func (s *channelState) getDifference(ctx context.Context) error {
 		}
 
 		if len(diff.NewMessages) > 0 {
+			if err := s.onEntities(ctx, diff.Users, diff.Chats); err != nil {
+				s.log.Error("Handle entities error (getDifference)", zap.Error(err))
+			}
 			if err := s.handler.Handle(ctx, &tg.Updates{
 				Updates: msgsToUpdates(diff.NewMessages, true),
 				Users:   diff.Users,
@@ -346,5 +353,9 @@ func (s *channelState) resetIdleTimer() {
 		<-s.idleTimeout.C
 	}
 
-	_ = s.idleTimeout.Reset(idleTimeout)
+	_ = s.idleTimeout.Reset(channelIdleTimeout())
+}
+
+func channelIdleTimeout() time.Duration {
+	return idleTimeout/2 + rand.N(idleTimeout)
 }

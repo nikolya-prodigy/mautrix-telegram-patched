@@ -33,8 +33,11 @@ import (
 func TestZeroMemberSyncDoesNotFetchAdmins(t *testing.T) {
 	tc := &TelegramClient{main: &TelegramConnector{}}
 	members := &bridgev2.ChatMemberList{}
-	require.NoError(t, tc.fillChannelMembers(context.Background(), &memberFetchMeta{Input: &tg.InputChannel{ChannelID: 123}}, members))
-	require.NoError(t, tc.fillTopicMembers(context.Background(), 123, &memberFetchMeta{Input: &tg.InputChannel{ChannelID: 123}}, members))
+	for _, hidden := range []bool{false, true} {
+		mfm := &memberFetchMeta{Input: &tg.InputChannel{ChannelID: 123}, ParticipantsHidden: hidden}
+		require.NoError(t, tc.fillChannelMembers(context.Background(), mfm, members))
+		require.NoError(t, tc.fillTopicMembers(context.Background(), 123, mfm, members))
+	}
 	require.Empty(t, members.MemberMap)
 }
 
